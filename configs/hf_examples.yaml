@@ -1,0 +1,71 @@
+# One example per HuggingFace architecture family. Every model is
+# pinned to a TINY checkpoint so the example finishes on a single GPU
+# (or a fast CPU) in a reasonable amount of time. Swap for production
+# checkpoints in your real config.
+#
+# These run as synthetic-data smoke unless you also pass `hf_dataset:`
+# pointing at a real dataset. The framework downloads the model from
+# the Hub on first run; subsequent runs are cached.
+
+run_id: hf_examples
+runs:
+  - name: bert_sequence_cls
+    type: hf_sequence_classification
+    seed: 42
+    config:
+      hf_model_name: prajjwal1/bert-tiny
+      n_classes: 2
+      max_length: 32
+      epochs: 1
+      batch_size: 4
+      n: 16
+
+  - name: gpt2_causal_lm
+    type: hf_causal_lm
+    seed: 42
+    config:
+      hf_model_name: sshleifer/tiny-gpt2
+      max_length: 32
+      epochs: 1
+      batch_size: 4
+      n: 16
+
+  - name: t5_seq2seq
+    type: hf_seq2seq
+    seed: 42
+    config:
+      hf_model_name: google/t5-efficient-tiny
+      max_length: 32
+      epochs: 1
+      batch_size: 4
+      n: 16
+
+  - name: vit_image_cls
+    type: hf_image_classification
+    seed: 42
+    config:
+      hf_model_name: hf-internal-testing/tiny-random-ViTForImageClassification
+      n_classes: 2
+      epochs: 1
+      batch_size: 4
+      n: 8
+
+  - name: whisper_audio
+    type: hf_whisper
+    seed: 42
+    config:
+      hf_model_name: hf-internal-testing/tiny-random-WhisperForConditionalGeneration
+      n_classes: 2
+      epochs: 1
+      batch_size: 2
+      n: 4
+
+  - name: bert_masked_lm
+    type: hf_masked_lm
+    seed: 42
+    config:
+      hf_model_name: prajjwal1/bert-tiny
+      max_length: 32
+      epochs: 1
+      batch_size: 4
+      n: 16

@@ -1,0 +1,38 @@
+# HF Cluster Optimizer
+runs/
+*.pt
+*.pth
+*.joblib
+*.cbm
+*.safetensors
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.env
+.envrc
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.cache/
+
+# HuggingFace cache (user typically wants this OUT of the repo)
+.huggingface/
+
+# Local release-handoff notes (not for the public repo)
+RELEASE_NOTES.md
