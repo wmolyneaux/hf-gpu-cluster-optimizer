@@ -1,0 +1,131 @@
+"""hf_cluster_optimizer.models.catboost -- CatBoost gradient-boosting trainer."""
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Dict, Iterable, Optional
+
+from hf_cluster_optimizer.base import (
+    Trainer, TrainerEpochResult, TrainerSetup, TrainerStepResult,
+)
+from hf_cluster_optimizer.registry import register
+
+
+@register("catboost")
+class CatBoostTrainer(Trainer):
+    """CatBoost classification or regression."""
+
+    def __init__(self, config: Dict[str, Any]) -> None:
+        self.config = dict(config)
+        self.task = str(self.config.get("task", "classification")).lower()
+        self.params = dict(self.config.get("params") or {})
+        self.num_boost_round = int(self.config.get("num_boost_round", 50))
+        self.model = None
+        self.X_train = None
+        self.y_train = None
+        self.X_val = None
+        self.y_val = None
+        self._train_score: Optional[float] = None
+        self._val_score: Optional[float] = None
+        self._best: Optional[float] = None
+
+    @classmethod
+    def from_config(cls, config: Dict[str, Any]) -> "CatBoostTrainer":
+        return cls(config)
+
+    def _load_data(self, seed: int):
+        import numpy as np
+        path = self.config.get("data_path")
+        n = int(self.config.get("n", 256))
+        in_dim = int(self.config.get("in_dim", 8))
+        n_classes = int(self.config.get("n_classes", 3))
+        if path:
+            from hf_cluster_optimizer.data_io import load_table
+            df = load_table(Path(path))
+            feat_cols = self.config.get("feature_columns")
+            label_col = self.config.get("label_column")
+            if not feat_cols or not label_col:
+                raise ValueError("cfg.data_path requires feature_columns + label_column")
+            X = df[list(feat_cols)].values.astype("float32")
+            y = df[label_col].values
+        else:
+            rng = np.random.default_rng(int(seed))
+            X = rng.standard_normal((n, in_dim)).astype("float32")
+            W = rng.standard_normal((in_dim, n_classes if self.task == "classification" else 1))
+            scores = X @ W
+            if self.task == "regression":
+                y = scores.squeeze(-1).astype("float32")
+            else:
+                y = scores.argmax(axis=-1).astype("int32")
+        cut = max(1, int(len(X) * 0.9))
+        return X[:cut], y[:cut], X[cut:] if cut < len(X) else X[:cut], y[cut:] if cut < len(y) else y[:cut]
+
+    def setup(self, setup: TrainerSetup) -> None:
+        self.X_train, self.y_train, self.X_val, self.y_val = self._load_data(setup.seed)
+        defaults = {
+            "iterations": self.num_boost_round,
+            "random_seed": int(setup.seed),
+            "verbose": False,
+            "thread_count": int(self.config.get("num_threads", 1)),
+            "allow_writing_files": False,
+        }
+        for k, v in defaults.items():
+            self.params.setdefault(k, v)
+
+    def _score(self, X, y) -> float:
+        from sklearn.metrics import accuracy_score, r2_score
+        pred = self.model.predict(X)
+        if self.task == "regression":
+            return float(r2_score(y, pred))
+        return float(accuracy_score(y, pred.flatten()))
+
+    def train_iter(self) -> Iterable[Any]:
+        if self.model is not None:
+            return iter([])
+        return iter([(self.X_train, self.y_train)])
+
+    def eval_iter(self) -> Iterable[Any]:
+        return iter([(self.X_val, self.y_val)])
+
+    def train_step(self, batch: Any) -> TrainerStepResult:
+        from catboost import CatBoostClassifier, CatBoostRegressor
+        Xb, yb = batch
+        cls = CatBoostRegressor if self.task == "regression" else CatBoostClassifier
+        self.model = cls(**self.params)
+        self.model.fit(Xb, yb)
+        s = self._score(Xb, yb)
+        self._train_score = s
+        return TrainerStepResult(metrics={"score": float(s)}, n_examples=int(len(Xb)))
+
+    def eval_step(self, batch: Any) -> TrainerStepResult:
+        Xb, yb = batch
+        s = self._score(Xb, yb)
+        self._val_score = s
+        return TrainerStepResult(metrics={"score": float(s)}, n_examples=int(len(Xb)))
+
+    def epoch_summary(self, epoch: int) -> TrainerEpochResult:
+        monitor = float(self._val_score if self._val_score is not None else 0.0)
+        is_best = self._best is None or monitor > self._best
+        if is_best:
+            self._best = monitor
+        return TrainerEpochResult(
+            train_metrics={"score": float(self._train_score or 0.0)},
+            val_metrics={"score": monitor},
+            is_best=is_best, monitor_value=monitor,
+        )
+
+    def num_epochs(self) -> int:
+        return 1
+
+    def save_checkpoint(self, path: Path) -> None:
+        path = Path(path).with_suffix(".cbm")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.model.save_model(str(path))
+
+    def load_checkpoint(self, path: Path) -> None:
+        from catboost import CatBoostClassifier, CatBoostRegressor
+        p = Path(path)
+        if p.suffix != ".cbm":
+            p = p.with_suffix(".cbm")
+        cls = CatBoostRegressor if self.task == "regression" else CatBoostClassifier
+        self.model = cls()
+        self.model.load_model(str(p))

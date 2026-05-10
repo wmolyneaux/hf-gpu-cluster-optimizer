@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  smoke:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package + smoke extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[torch,sklearn,boosting]"
+
+      - name: Run smoke
+        env:
+          OMP_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+        run: |
+          python -m hf_cluster_optimizer.tests.smoke
+
+      - name: Run orchestrator end-to-end (CPU)
+        env:
+          OMP_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+        run: |
+          python -m hf_cluster_optimizer.concurrent_train --config configs/all_models.yaml --force-cpu --max-workers 1
+
+      - name: Modal dry-run preview (no Modal SDK installed)
+        run: |
+          python hf_cluster_optimizer/modal_app.py --config configs/cost_controlled_modal.yaml --dry-run
