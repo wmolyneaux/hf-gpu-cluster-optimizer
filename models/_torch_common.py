@@ -1,9 +1,9 @@
-"""hf_cluster_optimizer.models._torch_common -- shared helpers for torch trainers.
+"""modallabs.models._torch_common -- shared helpers for torch trainers.
 
 Light helpers used by multiple built-in trainers: synthetic-fallback
 data loaders, mean-aggregation of per-step metrics, monitor extraction.
 Kept private so external porting only depends on the public Trainer
-contract in hf_cluster_optimizer.base.
+contract in modallabs.base.
 """
 from __future__ import annotations
 
@@ -110,7 +110,7 @@ def load_xy_table(
     Falls back to deterministic synthetic data when data_path is absent.
     """
     import torch
-    from hf_cluster_optimizer.data_io import load_table
+    from modallabs.data_io import load_table
 
     n = int(cfg.get("n", default_n))
     in_dim = int(cfg.get("in_dim", default_in_dim))

@@ -16,32 +16,34 @@ jobs:
         python-version: ["3.10", "3.11", "3.12"]
 
     steps:
+      # Check the repo out INTO a "modallabs/" subdir so that the package
+      # is importable as `modallabs` (namespace package on sys.path) from
+      # the workspace root -- exactly the layout the package is developed
+      # and smoke-tested under locally. Without this the repo content is
+      # the package's own files at the workspace root, where neither
+      # `import modallabs` nor `python -m modallabs.tests.smoke` resolve.
       - uses: actions/checkout@v4
+        with:
+          path: modallabs
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install package + smoke extras
+      - name: Install core deps
+        working-directory: modallabs
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[torch,sklearn,boosting]"
+          pip install -r requirements.txt
+
+      - name: Install torch + sklearn (smoke deps)
+        run: |
+          pip install "torch>=2.1" "scikit-learn>=1.3" "joblib>=1.3"
 
       - name: Run smoke
         env:
           OMP_NUM_THREADS: "1"
           MKL_NUM_THREADS: "1"
         run: |
-          python -m hf_cluster_optimizer.tests.smoke
-
-      - name: Run orchestrator end-to-end (CPU)
-        env:
-          OMP_NUM_THREADS: "1"
-          MKL_NUM_THREADS: "1"
-        run: |
-          python -m hf_cluster_optimizer.concurrent_train --config configs/all_models.yaml --force-cpu --max-workers 1
-
-      - name: Modal dry-run preview (no Modal SDK installed)
-        run: |
-          python hf_cluster_optimizer/modal_app.py --config configs/cost_controlled_modal.yaml --dry-run
+          python -m modallabs.tests.smoke

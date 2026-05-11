@@ -1,4 +1,4 @@
-# HF Cluster Optimizer
+# modallabs
 runs/
 *.pt
 *.pth
@@ -33,6 +33,3 @@ htmlcov/
 
 # HuggingFace cache (user typically wants this OUT of the repo)
 .huggingface/
-
-# Local release-handoff notes (not for the public repo)
-RELEASE_NOTES.md

@@ -1,11 +1,11 @@
-# Porting a new model into HF Cluster Optimizer
+# Porting a new model into modallabs
 
-HF Cluster Optimizer is a thin contract around `Trainer`. Adding a new model is
+modallabs is a thin contract around `Trainer`. Adding a new model is
 three steps. We'll work through them with a tiny example.
 
 ## The contract
 
-Open `hf_cluster_optimizer/base.py` and you'll see the full `Trainer` interface:
+Open `modallabs/base.py` and you'll see the full `Trainer` interface:
 nine abstract methods + an optional `teardown`. The framework calls
 them in this order:
 
@@ -31,17 +31,17 @@ the framework.
 ## Step 1: implement the Trainer
 
 Let's add a fictional `MyModelTrainer` that wraps a custom torch module.
-Drop this in `hf_cluster_optimizer/models/my_model.py`:
+Drop this in `modallabs/models/my_model.py`:
 
 ```python
 from pathlib import Path
 from typing import Any, Dict, Iterable
 import torch
 
-from hf_cluster_optimizer.base import (
+from modallabs.base import (
     Trainer, TrainerEpochResult, TrainerSetup, TrainerStepResult,
 )
-from hf_cluster_optimizer.registry import register
+from modallabs.registry import register
 
 
 @register("my_model")
@@ -65,7 +65,7 @@ class MyModelTrainer(Trainer):
         # Build your model; respect setup.seed for any random init.
         self.model = build_my_model(**self.config).to(self.device)
         self.opt = torch.optim.Adam(self.model.parameters(), lr=self.config["lr"])
-        # Load data -- use hf_cluster_optimizer.data_io.load_table for parquet/CSV.
+        # Load data -- use modallabs.data_io.load_table for parquet/CSV.
 
     def train_iter(self) -> Iterable[Any]:
         self._train_buf.clear()
@@ -113,10 +113,10 @@ model.
 
 ## Step 2: import the module so the registry fires
 
-Add a single line to `hf_cluster_optimizer/models/__init__.py`:
+Add a single line to `modallabs/models/__init__.py`:
 
 ```python
-_safe_import("hf_cluster_optimizer.models.my_model")
+_safe_import("modallabs.models.my_model")
 ```
 
 The `_safe_import` wrapper means a missing optional dep (e.g., a
@@ -125,7 +125,7 @@ custom CUDA kernel that won't compile on macOS) downgrades to a clean
 
 ## Step 3: add a smoke test entry
 
-Drop a tuple into `_LOCAL_CASES` in `hf_cluster_optimizer/tests/smoke.py`:
+Drop a tuple into `_LOCAL_CASES` in `modallabs/tests/smoke.py`:
 
 ```python
 ("my_model", {
@@ -134,7 +134,7 @@ Drop a tuple into `_LOCAL_CASES` in `hf_cluster_optimizer/tests/smoke.py`:
 }, ["torch"]),  # required modules
 ```
 
-Run `python -m hf_cluster_optimizer.tests.smoke` to verify the new model trains
+Run `python -m modallabs.tests.smoke` to verify the new model trains
 end-to-end + checkpoints + writes the done sentinel.
 
 ## Things to keep in mind
@@ -189,7 +189,7 @@ Trainer doesn't blow up the user's bill:
 
 ## Cost knobs your port inherits for free
 
-Your new Trainer port automatically gets every HF Cluster Optimizer cost control;
+Your new Trainer port automatically gets every modallabs cost control;
 you don't write any code to opt in. Document the right defaults for
 YOUR model in your trainer's module docstring so users can copy-paste
 them into their cfg without reading the framework source:
@@ -200,13 +200,13 @@ them into their cfg without reading the framework source:
 | Auto GPU selector | `runs[*].modal.gpu: auto` (string heuristic on hf_model_name) | off |
 | Per-run hard timeout | `runs[*].modal.max_runtime_sec: 1800` (Modal-enforced; gates the cost ceiling) | `14400` (4 h) |
 | Cost-preview hint | `runs[*].modal.est_sec_per_epoch: 60` (informational; does NOT gate ceiling) | `60` |
-| Total cost ceiling | `export HFCO_MAX_USD=<dollars>` | `25.0` |
+| Total cost ceiling | `export MODALLABS_MAX_USD=<dollars>` | `25.0` |
 
 The dry-run preview is the single source of truth -- run it before any
 launch:
 
 ```bash
-python hf_cluster_optimizer/modal_app.py --config <your.yaml> --dry-run
+python modallabs/modal_app.py --config <your.yaml> --dry-run
 ```
 
 You'll see per-run GPU type, per-run timeout (with `*` if overridden
@@ -216,8 +216,8 @@ breached, the CLI exits with code `2` and prints `BLOCKED`.
 
 ## When in doubt
 
-Look at `hf_cluster_optimizer/models/generic_torch.py` for the simplest possible
-torch trainer, or `hf_cluster_optimizer/models/hf_transformer.py` for the
+Look at `modallabs/models/generic_torch.py` for the simplest possible
+torch trainer, or `modallabs/models/hf_transformer.py` for the
 HuggingFace-AutoModel-driven one. Both follow the same contract; the
 HF one happens to dispatch on `cfg.hf_task` to pick the right
 AutoModel head.

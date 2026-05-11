@@ -1,10 +1,10 @@
-"""hf_cluster_optimizer.models.transformer -- built-in encoder-only transformer sequence trainer."""
+"""modallabs.models.transformer -- built-in encoder-only transformer sequence trainer."""
 from __future__ import annotations
 
 from typing import Any, Dict
 
-from hf_cluster_optimizer.registry import register
-from hf_cluster_optimizer.models._seq_base import SequenceTrainerBase
+from modallabs.registry import register
+from modallabs.models._seq_base import SequenceTrainerBase
 
 
 @register("transformer")

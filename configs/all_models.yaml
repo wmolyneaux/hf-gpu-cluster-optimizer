@@ -36,7 +36,7 @@ runs:
       n_classes: 3
       params: { num_leaves: 15, learning_rate: 0.1 }
 
-  - name: q_agent_smoke
+  - name: q_learning_smoke
     type: q_learning
     seed: 42
     config:

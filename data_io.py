@@ -1,4 +1,4 @@
-"""hf_cluster_optimizer — minimal data-loading abstraction.
+"""modallabs — minimal data-loading abstraction.
 
 Pandas-backed parquet/CSV reader plus a simple column-extraction API.
 Each Trainer typically uses pandas directly; this module only exists
@@ -32,12 +32,12 @@ def load_table(
 ) -> Any:
     """Load a parquet or CSV into a pandas DataFrame.
 
-    Lazy import so hf_cluster_optimizer without pandas still imports.
+    Lazy import so modallabs without pandas still imports.
     """
     import pandas as pd
     p = Path(path)
     if not p.exists():
-        raise FileNotFoundError(f"hf_cluster_optimizer.data_io.load_table: {p} does not exist")
+        raise FileNotFoundError(f"modallabs.data_io.load_table: {p} does not exist")
     if p.suffix.lower() in (".parquet", ".pq"):
         return pd.read_parquet(p, columns=list(columns) if columns else None)
     if p.suffix.lower() == ".csv":
@@ -45,7 +45,7 @@ def load_table(
     if p.suffix.lower() in (".json", ".jsonl"):
         return pd.read_json(p, lines=p.suffix.lower() == ".jsonl")
     raise ValueError(
-        f"hf_cluster_optimizer.data_io.load_table: unsupported extension {p.suffix!r}"
+        f"modallabs.data_io.load_table: unsupported extension {p.suffix!r}"
     )
 
 
@@ -60,7 +60,7 @@ def split_train_val(
 
     If `by_column` is given AND it's a sortable column (timestamp etc.),
     the split is time-based: last `val_frac` rows become val.
-    Otherwise it's a wallet-disjoint / random split with seed.
+    Otherwise it's a seeded random shuffle split.
     """
     import numpy as np
     import pandas as pd

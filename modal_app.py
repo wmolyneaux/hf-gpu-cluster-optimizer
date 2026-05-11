@@ -1,4 +1,4 @@
-"""HF Cluster Optimizer -- Modal Labs cloud orchestrator with cost controls.
+"""modallabs — Modal Labs cloud orchestrator with cost controls.
 
 Run the same orchestrator config on Modal Labs. One Modal function per
 run, isolated GPU per run, automatic shutdown on completion, hard
@@ -17,13 +17,13 @@ Cost controls (default-on):
 
 Usage:
     modal token new                              # one-time
-    modal run hf_cluster_optimizer/modal_app.py --config configs/all_models.yaml
-    modal run hf_cluster_optimizer/modal_app.py --config X --dry-run
-    modal volume get hfco-runs runs/             # download outputs
+    modal run modallabs/modal_app.py --config configs/all_models.yaml
+    modal run modallabs/modal_app.py --config X --dry-run
+    modal volume get modallabs-runs runs/        # download outputs
 
 Pre-flight cost preview (printed before any GPU spin-up):
     [DRY RUN] 5 runs queued
-       run #1: bert_classifier    gpu=T4   est=  4h ~= $1.44
+       run #1: bert_finetune      gpu=T4   est=  4h ~= $1.44
        run #2: gpt2_finetune      gpu=T4   est=  2h ~= $0.72
        ...
        Total estimated cost: $6.40
@@ -70,35 +70,15 @@ _GPU_HOURLY_USD: Dict[str, float] = {
 
 _MAX_RUNTIME_SEC_DEFAULT = 4 * 60 * 60  # 4 hours
 _DEFAULT_GPU = "T4"
-_VOLUME_NAME = "hfco-runs"
+_VOLUME_NAME = "modallabs-runs"
 # Hard upper bound on the dry-run cost-preview total. Override via env.
 _DEFAULT_MAX_TOTAL_USD = 25.0
 
 
 def _max_total_usd() -> float:
-    """Read the cost ceiling from env. Default $25.
-
-    Honors the new `HFCO_MAX_USD` env var. For backward compatibility
-    with the pre-rename framework, also honors the deprecated
-    `MODALLABS_MAX_USD` and prints a one-time stderr warning so users
-    know to migrate. The new name wins if both are set.
-    """
-    raw_new = os.environ.get("HFCO_MAX_USD")
-    raw_old = os.environ.get("MODALLABS_MAX_USD")
-    if raw_old is not None and raw_new is None:
-        import sys as _sys
-        if not getattr(_max_total_usd, "_warned_old_env", False):
-            print(
-                "hfco: MODALLABS_MAX_USD is deprecated; "
-                "rename to HFCO_MAX_USD. Honoring the old name for now.",
-                file=_sys.stderr,
-            )
-            _max_total_usd._warned_old_env = True  # type: ignore[attr-defined]
-    raw = raw_new if raw_new is not None else raw_old
-    if raw is None:
-        return _DEFAULT_MAX_TOTAL_USD
+    """Read the cost ceiling from env. Default $25."""
     try:
-        return float(raw)
+        return float(os.environ.get("MODALLABS_MAX_USD", _DEFAULT_MAX_TOTAL_USD))
     except (TypeError, ValueError):
         return _DEFAULT_MAX_TOTAL_USD
 
@@ -176,7 +156,7 @@ def _estimate_cost_usd(gpu: str, sec: int) -> float:
             _UNKNOWN_GPU_WARNED.add(gpu)
             import sys as _sys
             print(
-                f"   !! WARNING: GPU type {gpu!r} not in HF Cluster Optimizer price table. "
+                f"   !! WARNING: GPU type {gpu!r} not in modallabs price table. "
                 f"Cost preview using {_DEFAULT_GPU} rate (${_GPU_HOURLY_USD[_DEFAULT_GPU]:.2f}/h); "
                 f"actual Modal billing may differ. Verify against modal.com/pricing.",
                 file=_sys.stderr,
@@ -242,7 +222,7 @@ def _print_dry_run(cfg: Dict[str, Any]) -> bool:
     print(f"   --")
     print(f"   Total WORST-CASE cost (every run hits its max_runtime_sec timeout): ${total:.2f}")
     print(f"   Cost ceiling (gates on worst-case): ${_max_total_usd():.2f} "
-          f"(override via env HFCO_MAX_USD)")
+          f"(override via env MODALLABS_MAX_USD)")
     print(f"   Hard per-run timeout: {_MAX_RUNTIME_SEC_DEFAULT/3600:.1f}h default "
           f"(override per-run via cfg.modal.max_runtime_sec)")
     if timeout_overrides:
@@ -252,9 +232,9 @@ def _print_dry_run(cfg: Dict[str, Any]) -> bool:
         print()
         print(f"   !! BLOCKED: worst-case ${total:.2f} > ${_max_total_usd():.2f} ceiling.")
         print(f"   !! Either lower per-run max_runtime_sec / GPU tier,")
-        print(f"   !! or raise the ceiling: export HFCO_MAX_USD=<dollars>")
+        print(f"   !! or raise the ceiling: export MODALLABS_MAX_USD=<dollars>")
         print()
-        print("Cannot proceed: lower the cost or raise HFCO_MAX_USD.")
+        print("Cannot proceed: lower the cost or raise MODALLABS_MAX_USD.")
     else:
         print()
         print("Proceed: re-run without --dry-run to actually launch.")
@@ -266,7 +246,7 @@ def _print_dry_run(cfg: Dict[str, Any]) -> bool:
 # imports cleanly without modal installed (for dry-run on a local box).
 # ---------------------------------------------------------------------------
 
-_HF_CACHE_VOLUME_NAME = "hfco-hf-cache"
+_HF_CACHE_VOLUME_NAME = "modallabs-hf-cache"
 _HF_CACHE_MOUNT = "/hf_cache"
 
 
@@ -278,6 +258,8 @@ if _HAS_MODAL:
     # /hf_cache and point the standard HF env vars at it so the second cold
     # start sees the cache already populated. Volume is shared across all
     # Modal containers in this app; per Modal docs, reads are concurrent-safe.
+    # (Per Q-5c H6 deferral; Q-5b's audit content was overwritten and the
+    # GPU-burn-minimization owner role is vacant, so Q-5d applies it.)
     modal_image = (
         modal.Image.debian_slim(python_version="3.11")
         .pip_install(
@@ -300,14 +282,14 @@ if _HAS_MODAL:
             "HUGGINGFACE_HUB_CACHE": f"{_HF_CACHE_MOUNT}/hub",
             "HF_DATASETS_CACHE": f"{_HF_CACHE_MOUNT}/datasets",
         })
-        .add_local_python_source("hf_cluster_optimizer")  # bundle the framework
+        .add_local_python_source("modallabs")  # bundle the framework
     )
-    app = modal.App("hfco", image=modal_image)
+    app = modal.App("modallabs", image=modal_image)
     runs_volume = modal.Volume.from_name(_VOLUME_NAME, create_if_missing=True)
     hf_cache_volume = modal.Volume.from_name(_HF_CACHE_VOLUME_NAME, create_if_missing=True)
 
     # Tiny CPU-only function that inspects the volume and tells the local
-    # entrypoint which runs already have a `.hfco_done` sentinel.
+    # entrypoint which runs already have a `.modallabs_done` sentinel.
     # CPU container is ~$0.20/hr and runs in <1 sec; the alternative
     # (allocating a GPU per run just so train_one can call is_done()) is
     # the catastrophic burn we are preventing here.
@@ -318,7 +300,7 @@ if _HAS_MODAL:
     )
     def _done_runs(run_id: str, names: list) -> list:
         """Return the subset of `names` whose run dir has a done-sentinel."""
-        from hf_cluster_optimizer.checkpoint import is_done as _is_done
+        from modallabs.checkpoint import is_done as _is_done
         done = []
         for n in names:
             if _is_done(Path("/runs") / run_id / n):
@@ -335,7 +317,7 @@ if _HAS_MODAL:
         No `keep_warm` and no `min_containers` -- container exits on
         function return and the GPU is released.
 
-        Mounts the persistent `hfco-hf-cache` volume at
+        Mounts the persistent `modallabs-hf-cache` volume at
         `/hf_cache` so HuggingFace downloads survive container teardown
         across runs. The image's HF_HOME / TRANSFORMERS_CACHE /
         HUGGINGFACE_HUB_CACHE / HF_DATASETS_CACHE env vars all point at
@@ -353,8 +335,8 @@ if _HAS_MODAL:
             # We deliberately do NOT pass keep_warm or min_containers.
         )
         def _remote(run_cfg: dict, run_id: str, resume: bool) -> dict:
-            from hf_cluster_optimizer.runner import train_one
-            import hf_cluster_optimizer.models  # noqa: F401  -- register trainers
+            from modallabs.runner import train_one
+            import modallabs.models  # noqa: F401  -- register trainers
             return train_one(
                 run_cfg,
                 run_id=run_id,
@@ -386,14 +368,14 @@ if _HAS_MODAL:
             try:
                 already_done = set(_done_runs.remote(run_id, [str(r.get("name")) for r in runs]))
             except Exception as exc:
-                print(f"hfco/modal: resume probe failed ({exc!r}); "
+                print(f"modallabs/modal: resume probe failed ({exc!r}); "
                       f"falling back to letting each worker check is_done. "
                       f"Note: this may allocate GPUs for already-done runs.")
                 already_done = set()
             if already_done:
                 pre_skipped = [r for r in runs if str(r.get("name")) in already_done]
                 runs = [r for r in runs if str(r.get("name")) not in already_done]
-                print(f"hfco/modal: --resume skipping {len(pre_skipped)} "
+                print(f"modallabs/modal: --resume skipping {len(pre_skipped)} "
                       f"already-done runs (no GPU allocated): "
                       f"{[r.get('name') for r in pre_skipped]}")
 
@@ -405,16 +387,16 @@ if _HAS_MODAL:
         if total > ceiling:
             _print_dry_run(cfg_after_resume)  # purely informational here
             raise RuntimeError(
-                f"hfco/modal: refusing to launch -- worst-case total "
+                f"modallabs/modal: refusing to launch -- worst-case total "
                 f"${total:.2f} exceeds ceiling ${ceiling:.2f}. "
-                f"Override with `export HFCO_MAX_USD=<dollars>` if intentional."
+                f"Override with `export MODALLABS_MAX_USD=<dollars>` if intentional."
             )
         if not runs:
-            print("hfco/modal: nothing to launch (all runs already done or empty config).")
+            print("modallabs/modal: nothing to launch (all runs already done or empty config).")
             print(json.dumps({"run_id": run_id, "n_runs": 0, "runs": []}, indent=2))
             return
 
-        print(f"hfco/modal: launching {len(runs)} runs (run_id={run_id}); "
+        print(f"modallabs/modal: launching {len(runs)} runs (run_id={run_id}); "
               f"worst-case total ${total:.2f} (ceiling ${ceiling:.2f}); "
               f"per-run hard timeout enforced by Modal; tear-down on completion.")
         # Modal fans these out concurrently (each .spawn() call is async).
@@ -439,7 +421,7 @@ if _HAS_MODAL:
         except KeyboardInterrupt:
             # User Ctrl-C -- cancel any in-flight futures so containers
             # terminate (and GPUs release) instead of running to timeout.
-            print("hfco/modal: KeyboardInterrupt -- cancelling outstanding futures.")
+            print("modallabs/modal: KeyboardInterrupt -- cancelling outstanding futures.")
             for name, fut in futures:
                 try:
                     fut.cancel()
@@ -464,7 +446,7 @@ if _HAS_MODAL:
 
 def _cli() -> int:
     import argparse
-    ap = argparse.ArgumentParser(description="HF Cluster Optimizer Modal orchestrator (preview when modal not installed)")
+    ap = argparse.ArgumentParser(description="modallabs Modal orchestrator (preview when modal not installed)")
     ap.add_argument("--config", required=True)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
@@ -478,7 +460,7 @@ def _cli() -> int:
         # launch path does (it raises RuntimeError before spawning any
         # function).
         return 2 if blocked else 0
-    print("Use `modal run hf_cluster_optimizer/modal_app.py --config <path>` to launch on Modal.")
+    print("Use `modal run modallabs/modal_app.py --config <path>` to launch on Modal.")
     return 0
 
 

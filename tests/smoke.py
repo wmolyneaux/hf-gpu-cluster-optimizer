@@ -1,4 +1,4 @@
-"""hf_cluster_optimizer.tests.smoke -- 90-second end-to-end smoke.
+"""modallabs.tests.smoke -- 90-second end-to-end smoke.
 
 Tests:
   1. Every registered local-only model type trains a tiny synthetic run
@@ -13,7 +13,7 @@ the lightgbm/xgboost/catboost/transformers cells are skipped if those
 libs are missing. We log "SKIPPED dep <X>" and exit success.
 
 Run from the repo root:
-    python -m hf_cluster_optimizer.tests.smoke
+    python -m modallabs.tests.smoke
 """
 from __future__ import annotations
 
@@ -31,9 +31,9 @@ os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 
-import hf_cluster_optimizer.models  # noqa: E402,F401  -- registers all built-ins
-from hf_cluster_optimizer.runner import train_one  # noqa: E402
-from hf_cluster_optimizer.registry import list_types  # noqa: E402
+import modallabs.models  # noqa: E402,F401  -- registers all built-ins
+from modallabs.runner import train_one  # noqa: E402
+from modallabs.registry import list_types  # noqa: E402
 
 
 def _has(modname: str) -> bool:
@@ -142,11 +142,11 @@ def _read_metrics(jsonl: Path) -> List[Dict[str, Any]]:
 
 
 def main() -> int:
-    print("hf_cluster_optimizer smoke: starting")
-    print(f"hf_cluster_optimizer smoke: registered types = {list_types()}")
+    print("modallabs smoke: starting")
+    print(f"modallabs smoke: registered types = {list_types()}")
 
-    base = Path(tempfile.mkdtemp(prefix="hfco_smoke_"))
-    print(f"hf_cluster_optimizer smoke: scratch dir = {base}")
+    base = Path(tempfile.mkdtemp(prefix="modallabs_smoke_"))
+    print(f"modallabs smoke: scratch dir = {base}")
 
     n_run = 0
     n_skip = 0
@@ -180,9 +180,9 @@ def main() -> int:
 
     # ---- Phase 2: determinism (torch_module rerun) ----
     if _has("torch"):
-        print("hf_cluster_optimizer smoke: determinism check (torch_module x2 with seed=42)")
-        c2_root_a = Path(tempfile.mkdtemp(prefix="hfco_det_a_"))
-        c2_root_b = Path(tempfile.mkdtemp(prefix="hfco_det_b_"))
+        print("modallabs smoke: determinism check (torch_module x2 with seed=42)")
+        c2_root_a = Path(tempfile.mkdtemp(prefix="modallabs_det_a_"))
+        c2_root_b = Path(tempfile.mkdtemp(prefix="modallabs_det_b_"))
         cfg = {
             "module_path": "torch.nn:Linear",
             "module_kwargs": {"in_features": 8, "out_features": 3},
@@ -205,11 +205,11 @@ def main() -> int:
             print(f"  OK   determinism: {ma} == {mb}")
 
     # ---- Phase 3: crash isolation ----
-    print("hf_cluster_optimizer smoke: crash isolation check")
-    crash_root = Path(tempfile.mkdtemp(prefix="hfco_crash_"))
+    print("modallabs smoke: crash isolation check")
+    crash_root = Path(tempfile.mkdtemp(prefix="modallabs_crash_"))
     try:
         bad = _run_case("torch_module", {
-            "module_path": "hf_cluster_optimizer._intentionally_missing_module:Nope",
+            "module_path": "modallabs._intentionally_missing_module:Nope",
             "epochs": 1, "n": 16, "in_dim": 8, "n_classes": 3,
         }, crash_root, run_id="crash", seed=42)
         if bad.get("phase") == "failed":
@@ -234,13 +234,13 @@ def main() -> int:
         n_fail += 1
         failures.append(f"crash isolation orchestrator: {exc}")
 
-    print(f"\nhf_cluster_optimizer smoke: ran={n_run} skipped={n_skip} failed={n_fail}")
+    print(f"\nmodallabs smoke: ran={n_run} skipped={n_skip} failed={n_fail}")
     if failures:
         print("Failures:")
         for f in failures:
             print(f"  - {f}")
         return 1
-    print("hf_cluster_optimizer smoke: PASS")
+    print("modallabs smoke: PASS")
     return 0
 
 

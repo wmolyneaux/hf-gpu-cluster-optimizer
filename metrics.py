@@ -1,4 +1,4 @@
-"""hf_cluster_optimizer — JSON-line metrics writer + reader.
+"""modallabs — JSON-line metrics writer + reader.
 
 One file per run at runs/<run_id>/<run_name>/metrics.jsonl.
 Each line is a JSON object with keys:

@@ -1,4 +1,4 @@
-"""hf_cluster_optimizer.models.diffusion -- minimal DDPM trainer (toy 2D for smoke).
+"""modallabs.models.diffusion -- minimal DDPM trainer (toy 2D for smoke).
 
 A tiny 2D-feature denoising diffusion model so the smoke test can run on
 CPU in seconds. The same Trainer also accepts cfg.image_size for image
@@ -9,12 +9,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from hf_cluster_optimizer.base import (
+from modallabs.base import (
     Trainer, TrainerEpochResult, TrainerSetup, TrainerStepResult,
 )
-from hf_cluster_optimizer.registry import register
+from modallabs.registry import register
 
-from hf_cluster_optimizer.models._torch_common import mean_metrics, resolve_device
+from modallabs.models._torch_common import mean_metrics, resolve_device
 
 
 @register("diffusion")

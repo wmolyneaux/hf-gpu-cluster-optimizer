@@ -1,12 +1,12 @@
-"""hf_cluster_optimizer — local concurrent orchestrator.
+"""modallabs — local concurrent orchestrator.
 
 Parses the orchestrator cfg, dispatches each run as a separate process,
 collects results, writes a consolidated summary.
 
 Usage:
-    python -m hf_cluster_optimizer.concurrent_train --config configs/all_models.yaml
-    python -m hf_cluster_optimizer.concurrent_train --config X.yaml --resume
-    python -m hf_cluster_optimizer.concurrent_train --config X.yaml --max-workers 2
+    python -m modallabs.concurrent_train --config configs/all_models.yaml
+    python -m modallabs.concurrent_train --config X.yaml --resume
+    python -m modallabs.concurrent_train --config X.yaml --max-workers 2
 
 Process-pool gives clean GPU/CUDA isolation per run -- a model that
 OOMs only kills its own process.
@@ -26,13 +26,13 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
-import hf_cluster_optimizer.models  # noqa: F401  -- registers all built-in trainers
-from hf_cluster_optimizer.checkpoint import (
+import modallabs.models  # noqa: F401  -- registers all built-in trainers
+from modallabs.checkpoint import (
     _resolve_existing_checkpoint,
     final_checkpoint_path,
     is_done as _ckpt_is_done,
 )
-from hf_cluster_optimizer.runner import train_one
+from modallabs.runner import train_one
 
 
 logger = logging.getLogger(__name__)
@@ -148,7 +148,7 @@ def run(
                 # so the run executes again and re-emits the artifact.
                 resolved = _resolve_existing_checkpoint(final_checkpoint_path(run_dir))
                 if resolved.exists():
-                    logger.info("hfco: pre-skipping %s (already done)", rc["name"])
+                    logger.info("modallabs: pre-skipping %s (already done)", rc["name"])
                     results.append({
                         "name": str(rc["name"]),
                         "phase": "succeeded",
@@ -158,7 +158,7 @@ def run(
                     })
                 else:
                     logger.warning(
-                        "hfco: %s has done-sentinel but no checkpoint "
+                        "modallabs: %s has done-sentinel but no checkpoint "
                         "(possibly deleted); re-running to restore artifact",
                         rc["name"],
                     )
@@ -174,7 +174,7 @@ def run(
         args_list.append((rc, run_id, str(out_root), resume, force_cpu, gpu_idx))
 
     if not args_list:
-        logger.info("hfco: nothing to dispatch (all runs already done).")
+        logger.info("modallabs: nothing to dispatch (all runs already done).")
     elif workers == 1:
         # Serial fallback -- easier to debug, no pool overhead.
         for a in args_list:
@@ -210,7 +210,7 @@ def run(
                 # User Ctrl-C -- cancel pending futures so we stop billing
                 # for any worker the pool is about to start. In-flight
                 # workers will receive SIGTERM via the pool's __exit__.
-                logger.warning("hfco: KeyboardInterrupt -- cancelling pending futures.")
+                logger.warning("modallabs: KeyboardInterrupt -- cancelling pending futures.")
                 for fut in futures:
                     fut.cancel()
                 raise
@@ -237,7 +237,7 @@ def run(
     summary_path = summary_dir / "summary.json"
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     logger.info(
-        "hfco: run_id=%s done. succeeded=%d failed=%d interrupted=%d elapsed=%.1fs",
+        "modallabs: run_id=%s done. succeeded=%d failed=%d interrupted=%d elapsed=%.1fs",
         run_id, n_succeeded, n_failed, n_interrupted, elapsed,
     )
     return summary
@@ -246,7 +246,7 @@ def run(
 def main(argv: Optional[List[str]] = None) -> int:
     av = list(argv) if argv is not None else sys.argv[1:]
     parser = argparse.ArgumentParser(
-        description="HF Cluster Optimizer concurrent training orchestrator (local).",
+        description="modallabs concurrent training orchestrator (local).",
     )
     parser.add_argument("--config", required=True, help="path to orchestrator yaml")
     parser.add_argument("--output-root", default="runs", help="output directory root")
@@ -264,7 +264,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     _level = getattr(logging, _level_name, None)
     if not isinstance(_level, int):
         print(
-            f"hfco/concurrent_train: unknown --log-level {args.log_level!r}; "
+            f"modallabs/concurrent_train: unknown --log-level {args.log_level!r}; "
             f"falling back to INFO. Valid: DEBUG INFO WARNING ERROR CRITICAL.",
             file=sys.stderr,
         )

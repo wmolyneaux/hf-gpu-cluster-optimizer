@@ -1,4 +1,4 @@
-"""hf_cluster_optimizer — deterministic seed setup.
+"""modallabs — deterministic seed setup.
 
 Set seeds across every common library so a Trainer started with seed=N
 produces the same checkpoint every time.
@@ -28,7 +28,7 @@ def set_global_seed(seed: int, *, strict_torch: bool = True) -> None:
     # concurrent_train's ProcessPoolExecutor) inherit the parent's env
     # and DO read PYTHONHASHSEED at their fresh interpreter startup, so
     # the seed propagates to children. Functional but subtle; documented
-    # here so the next reader doesn't have to re-derive the behavior.
+    # here so future readers don't "fix" it by deleting the assignment.
     os.environ["PYTHONHASHSEED"] = str(seed)
     random.seed(seed)
     try:

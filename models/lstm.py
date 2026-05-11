@@ -1,15 +1,15 @@
-"""hf_cluster_optimizer.models.lstm -- built-in LSTM sequence trainer."""
+"""modallabs.models.lstm -- built-in LSTM sequence trainer."""
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from hf_cluster_optimizer.base import (
+from modallabs.base import (
     Trainer, TrainerEpochResult, TrainerSetup, TrainerStepResult,
 )
-from hf_cluster_optimizer.registry import register
+from modallabs.registry import register
 
-from hf_cluster_optimizer.models._torch_common import (
+from modallabs.models._torch_common import (
     make_synthetic_sequences,
     mean_metrics,
     resolve_device,
@@ -83,7 +83,7 @@ class LSTMTrainer(Trainer):
         # Data: try parquet if data_path; else synthetic deterministic.
         path = self.config.get("data_path")
         if path:
-            from hf_cluster_optimizer.data_io import load_table
+            from modallabs.data_io import load_table
             df = load_table(Path(path))
             feat_cols = list(self.config.get("feature_columns") or [])
             label_col = self.config.get("label_column")

@@ -1,7 +1,7 @@
-# HF Cluster Optimizer orchestrator config template.
+# modallabs orchestrator config template.
 # Every field is documented inline. Copy this file, edit, and pass to
-# `python -m hf_cluster_optimizer.concurrent_train --config <your.yaml>` or
-# `modal run hf_cluster_optimizer/modal_app.py --config <your.yaml>`.
+# `python -m modallabs.concurrent_train --config <your.yaml>` or
+# `modal run modallabs/modal_app.py --config <your.yaml>`.
 
 # Optional. Becomes the parent directory under runs/. If omitted, an
 # ISO timestamp is used.
@@ -12,8 +12,8 @@ runs:
   - # Required. Folder name under runs/<run_id>/.
     name: example_run_name
 
-    # Required. Registered model type. See `python -c "import hf_cluster_optimizer.models;
-    # from hf_cluster_optimizer.registry import list_types; print(list_types())"` for the full list.
+    # Required. Registered model type. See `python -c "import modallabs.models;
+    # from modallabs.registry import list_types; print(list_types())"` for the full list.
     type: hf_sequence_classification
 
     # Optional. Per-run RNG seed. Defaults to 0.

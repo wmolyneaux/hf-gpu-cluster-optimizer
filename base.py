@@ -1,6 +1,6 @@
-"""hf_cluster_optimizer — abstract Trainer interface.
+"""modallabs — abstract Trainer interface.
 
-Every model type registered in hf_cluster_optimizer implements the Trainer protocol
+Every model type registered in modallabs implements the Trainer protocol
 defined here. The interface is intentionally tiny: 6 methods + 1
 classmethod. Anything more model-specific lives inside the Trainer
 implementation.
@@ -80,7 +80,7 @@ class Trainer(ABC):
 
         Implementations MUST honor `setup.seed` -- set torch / numpy /
         random seeds before instantiating any module that uses random
-        initialization. Use hf_cluster_optimizer.seed.set_global_seed() for the
+        initialization. Use modallabs.seed.set_global_seed() for the
         canonical recipe.
         """
 

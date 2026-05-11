@@ -1,4 +1,4 @@
-"""hf_cluster_optimizer.models.ntm -- Neural Turing Machine (read+write external memory).
+"""modallabs.models.ntm -- Neural Turing Machine (read+write external memory).
 
 A small NTM with one read head + one write head over an N x M memory.
 The controller is an LSTM cell. Used as a sequence classifier here so it
@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from hf_cluster_optimizer.registry import register
-from hf_cluster_optimizer.models._seq_base import SequenceTrainerBase
+from modallabs.registry import register
+from modallabs.models._seq_base import SequenceTrainerBase
 
 
 @register("ntm")

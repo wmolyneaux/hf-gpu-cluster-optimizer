@@ -1,13 +1,13 @@
-"""hf_cluster_optimizer.models.lightgbm -- LightGBM gradient-boosting trainer."""
+"""modallabs.models.lightgbm -- LightGBM gradient-boosting trainer."""
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-from hf_cluster_optimizer.base import (
+from modallabs.base import (
     Trainer, TrainerEpochResult, TrainerSetup, TrainerStepResult,
 )
-from hf_cluster_optimizer.registry import register
+from modallabs.registry import register
 
 
 @register("lightgbm")
@@ -39,7 +39,7 @@ class LightGBMTrainer(Trainer):
         in_dim = int(self.config.get("in_dim", 8))
         n_classes = int(self.config.get("n_classes", 3))
         if path:
-            from hf_cluster_optimizer.data_io import load_table
+            from modallabs.data_io import load_table
             df = load_table(Path(path))
             feat_cols = self.config.get("feature_columns")
             label_col = self.config.get("label_column")

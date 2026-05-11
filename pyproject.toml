@@ -3,22 +3,14 @@ requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "hf-cluster-optimizer"
+name = "modallabs"
 version = "0.1.0"
-description = "A HuggingFace-native concurrent training harness for GPU clusters."
+description = "Portable concurrent training framework for HuggingFace + custom ML models, runs locally or on Modal Labs."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
-authors = [{ name = "The HF Cluster Optimizer contributors" }]
-keywords = [
-    "huggingface",
-    "transformers",
-    "gpu-cluster",
-    "concurrent-training",
-    "training-harness",
-    "modal",
-    "machine-learning",
-]
+authors = [{ name = "modallabs contributors" }]
+keywords = ["machine-learning", "huggingface", "modal", "training", "concurrent"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -65,14 +57,21 @@ full = [
 ]
 
 [project.scripts]
-hfco-train = "hf_cluster_optimizer.concurrent_train:main"
+modallabs-train = "modallabs.concurrent_train:main"
 
 [project.urls]
-# Set these to your GitHub <owner>/<repo> after creating the repo.
-Homepage = "https://github.com/<owner>/hf-cluster-optimizer"
-Repository = "https://github.com/<owner>/hf-cluster-optimizer"
-Issues = "https://github.com/<owner>/hf-cluster-optimizer/issues"
-Changelog = "https://github.com/<owner>/hf-cluster-optimizer/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/wmolyneaux/hf-cluster-optimizer"
 
-[tool.setuptools.packages.find]
-include = ["hf_cluster_optimizer*"]
+# Flat layout: the package files (base.py, runner.py, models/, tests/, ...)
+# live directly next to this pyproject.toml, so the `modallabs` import name
+# maps onto "." rather than a `modallabs/` subdirectory. `modallabs.tests`
+# is INCLUDED on purpose -- the smoke test is the package's own conformance
+# suite and `python -m modallabs.tests.smoke` must work after a plain
+# `pip install`.
+[tool.setuptools]
+packages = ["modallabs", "modallabs.models", "modallabs.tests"]
+
+[tool.setuptools.package-dir]
+"modallabs" = "."
+"modallabs.models" = "models"
+"modallabs.tests" = "tests"

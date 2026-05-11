@@ -1,4 +1,4 @@
-"""hf_cluster_optimizer — single-run executor.
+"""modallabs — single-run executor.
 
 `train_one(run_cfg, run_id, output_root)` runs ONE Trainer end-to-end:
 construct -> setup -> train epochs -> save final/best checkpoints ->
@@ -24,8 +24,8 @@ from typing import Any, Dict, Optional
 
 import yaml
 
-from hf_cluster_optimizer.base import Trainer, TrainerSetup
-from hf_cluster_optimizer.checkpoint import (
+from modallabs.base import Trainer, TrainerSetup
+from modallabs.checkpoint import (
     SENTINEL,
     _resolve_existing_checkpoint,
     best_checkpoint_path,
@@ -33,18 +33,18 @@ from hf_cluster_optimizer.checkpoint import (
     is_done,
     write_done,
 )
-from hf_cluster_optimizer.metrics import MetricsWriter
-from hf_cluster_optimizer.registry import get as registry_get
-from hf_cluster_optimizer.seed import set_global_seed
+from modallabs.metrics import MetricsWriter
+from modallabs.registry import get as registry_get
+from modallabs.seed import set_global_seed
 
 # Importing this package fires every Trainer's @register decorator. Without
 # this, a caller using `train_one` directly (no orchestrator) would see an
 # empty registry and KeyError on the first cfg type lookup. The orchestrator
 # (concurrent_train.py) and the Modal worker (_remote in modal_app.py) also
-# import hf_cluster_optimizer.models, but doing it here makes runner.py the single
+# import modallabs.models, but doing it here makes runner.py the single
 # source of registration truth for any caller -- subprocess, modal function,
 # or direct Python invocation. Cost is one one-time import.
-import hf_cluster_optimizer.models  # noqa: F401  -- side-effect: register all built-in trainers
+import modallabs.models  # noqa: F401  -- side-effect: register all built-in trainers
 
 
 logger = logging.getLogger(__name__)
@@ -182,14 +182,15 @@ def train_one(
         # Reporting `succeeded` here would let downstream `load_checkpoint`
         # silently fail. Re-run instead -- the cost is one fresh training
         # pass; the alternative is a misleading "succeeded" with a missing
-        # artifact, which is the silent-cloaking pattern we want to avoid.
+        # artifact, which is exactly the silent-cloaking pattern locked
+        # against in feedback_optimization_protocol.md.
         ckpt = final_checkpoint_path(run_dir)
         # Trainer types that save to a directory (HF save_pretrained) drop
         # the .pt suffix; check both the suffixed file AND the bare-name
         # directory before declaring success.
         ckpt_dir = ckpt.with_suffix("")
         if ckpt.exists() or ckpt_dir.exists():
-            logger.info("hfco: skipping %s (already done)", name)
+            logger.info("modallabs: skipping %s (already done)", name)
             return {
                 "name": name,
                 "phase": "succeeded",
@@ -198,7 +199,7 @@ def train_one(
                 "checkpoint_path": str(ckpt if ckpt.exists() else ckpt_dir),
             }
         logger.warning(
-            "hfco: %s has done-sentinel but no checkpoint at %s "
+            "modallabs: %s has done-sentinel but no checkpoint at %s "
             "(possibly deleted); re-running to restore the artifact",
             name, ckpt,
         )
@@ -211,7 +212,7 @@ def train_one(
 
     log_path = run_dir / "log.txt"
     log_fh = log_path.open("a", encoding="utf-8")
-    log_fh.write(f"\n=== hfco run start {_utcnow_iso()} ===\n")
+    log_fh.write(f"\n=== modallabs run start {_utcnow_iso()} ===\n")
 
     metrics_path = run_dir / "metrics.jsonl"
     started_at = time.time()

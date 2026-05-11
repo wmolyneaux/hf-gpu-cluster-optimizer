@@ -1,42 +1,40 @@
-"""hf_cluster_optimizer.models.manifold -- learned manifold encoder (sequence -> latent).
+"""modallabs.models._seq_base -- shared sequence-classifier training loop.
 
-This is a self-supervised triplet-style encoder: temporal positives
-within a sequence vs negatives across sequences. Output is a fixed-dim
-latent that downstream tasks consume. It also exposes a small classifier
-head so smoke-test accuracy can be reported alongside reconstruction loss.
+Subclasses provide build_model(in_dim, n_out) returning a torch.nn.Module
+that consumes (B, T, F) and outputs (B, n_out). The base handles data,
+optimizer, loss, batching, metrics, monitor, checkpoint.
 """
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from hf_cluster_optimizer.base import (
+from modallabs.base import (
     Trainer, TrainerEpochResult, TrainerSetup, TrainerStepResult,
 )
-from hf_cluster_optimizer.registry import register
 
-from hf_cluster_optimizer.models._torch_common import (
+from modallabs.models._torch_common import (
     make_synthetic_sequences,
     mean_metrics,
     resolve_device,
 )
 
 
-@register("manifold")
-class ManifoldEncoderTrainer(Trainer):
-    """MLP encoder over mean-pooled sequence with classification head."""
+class SequenceTrainerBase(Trainer):
+    """Base for sequence -> class (or scalar) trainers."""
 
     def __init__(self, config: Dict[str, Any]) -> None:
         self.config = dict(config)
         self.in_dim = int(self.config.get("in_dim", 8))
-        self.latent_dim = int(self.config.get("latent_dim", 16))
         self.hidden_dim = int(self.config.get("hidden_dim", 32))
+        self.num_layers = int(self.config.get("num_layers", 1))
         self.n_classes = int(self.config.get("n_classes", 3))
         self.seq_len = int(self.config.get("seq_len", 16))
         self.batch_size = int(self.config.get("batch_size", 32))
         self.lr = float(self.config.get("lr", 1e-3))
         self.epochs = int(self.config.get("epochs", 1))
         self.n_samples = int(self.config.get("n", 256))
+        self.task = str(self.config.get("task", "classification")).lower()
         self.device = "cpu"
         self.model = None
         self.opt = None
@@ -50,37 +48,22 @@ class ManifoldEncoderTrainer(Trainer):
         self._best: Optional[float] = None
 
     @classmethod
-    def from_config(cls, config: Dict[str, Any]) -> "ManifoldEncoderTrainer":
+    def from_config(cls, config: Dict[str, Any]) -> "SequenceTrainerBase":
         return cls(config)
+
+    # --- subclass hook ---
+    def build_model(self, in_dim: int, n_out: int):
+        raise NotImplementedError
 
     def setup(self, setup: TrainerSetup) -> None:
         import torch
         import torch.nn as nn
 
         self.device = resolve_device(setup.device)
-        in_dim, latent, hidden, n_out = self.in_dim, self.latent_dim, self.hidden_dim, self.n_classes
-
-        class _Encoder(nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.enc = nn.Sequential(
-                    nn.Linear(in_dim, hidden), nn.ReLU(),
-                    nn.Linear(hidden, latent),
-                )
-                self.head = nn.Linear(latent, n_out)
-
-            def forward(self, x):
-                pooled = x.mean(dim=1)
-                z = self.enc(pooled)
-                return self.head(z)
-
-            def encode(self, x):
-                return self.enc(x.mean(dim=1))
-
-        self.model = _Encoder().to(self.device)
+        n_out = 1 if self.task == "regression" else self.n_classes
+        self.model = self.build_model(self.in_dim, n_out).to(self.device)
         self.opt = torch.optim.Adam(self.model.parameters(), lr=self.lr)
-        self.loss_fn = nn.CrossEntropyLoss()
-
+        self.loss_fn = nn.MSELoss() if self.task == "regression" else nn.CrossEntropyLoss()
         X, y = make_synthetic_sequences(
             self.n_samples, self.seq_len, self.in_dim, self.n_classes, setup.seed,
         )
@@ -109,30 +92,43 @@ class ManifoldEncoderTrainer(Trainer):
         Xb, yb = batch
         self.opt.zero_grad()
         out = self.model(Xb)
-        loss = self.loss_fn(out, yb.long())
-        with torch.no_grad():
-            acc = (out.argmax(dim=-1) == yb).float().mean().item()
+        if self.task == "regression":
+            out = out.squeeze(-1)
+            loss = self.loss_fn(out, yb.float())
+            metrics = {"loss": float(loss.item())}
+        else:
+            loss = self.loss_fn(out, yb.long())
+            with torch.no_grad():
+                acc = (out.argmax(dim=-1) == yb).float().mean().item()
+            metrics = {"loss": float(loss.item()), "acc": float(acc)}
         loss.backward()
         self.opt.step()
-        m = {"loss": float(loss.item()), "acc": float(acc)}
-        self._train_buf.append(m)
-        return TrainerStepResult(metrics=m, n_examples=int(Xb.shape[0]))
+        self._train_buf.append(metrics)
+        return TrainerStepResult(metrics=metrics, n_examples=int(Xb.shape[0]))
 
     def eval_step(self, batch: Any) -> TrainerStepResult:
         import torch
         Xb, yb = batch
         with torch.no_grad():
             out = self.model(Xb)
-            loss = self.loss_fn(out, yb.long())
-            acc = (out.argmax(dim=-1) == yb).float().mean().item()
-        m = {"loss": float(loss.item()), "acc": float(acc)}
-        self._eval_buf.append(m)
-        return TrainerStepResult(metrics=m, n_examples=int(Xb.shape[0]))
+            if self.task == "regression":
+                out = out.squeeze(-1)
+                loss = self.loss_fn(out, yb.float())
+                metrics = {"loss": float(loss.item())}
+            else:
+                loss = self.loss_fn(out, yb.long())
+                acc = (out.argmax(dim=-1) == yb).float().mean().item()
+                metrics = {"loss": float(loss.item()), "acc": float(acc)}
+        self._eval_buf.append(metrics)
+        return TrainerStepResult(metrics=metrics, n_examples=int(Xb.shape[0]))
 
     def epoch_summary(self, epoch: int) -> TrainerEpochResult:
         train_m = mean_metrics(self._train_buf)
         val_m = mean_metrics(self._eval_buf)
-        monitor = float(val_m.get("acc", 0.0))
+        if self.task == "regression":
+            monitor = -float(val_m.get("loss", float("inf")))
+        else:
+            monitor = float(val_m.get("acc", 0.0))
         is_best = self._best is None or monitor > self._best
         if is_best:
             self._best = monitor

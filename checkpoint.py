@@ -1,4 +1,4 @@
-"""hf_cluster_optimizer — checkpoint save / load helpers.
+"""modallabs — checkpoint save / load helpers.
 
 Format detection by file extension:
   .pt / .pth                 -> torch.save / torch.load
@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 
-SENTINEL = ".hfco_done"
+SENTINEL = ".modallabs_done"
 
 
 def write_done(run_dir: Path, payload: Optional[Dict[str, Any]] = None) -> None:
@@ -31,7 +31,7 @@ def write_done(run_dir: Path, payload: Optional[Dict[str, Any]] = None) -> None:
     run_dir = Path(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     body = dict(payload or {})
-    body.setdefault("hfco_version", 1)
+    body.setdefault("modallabs_version", 1)
     (run_dir / SENTINEL).write_text(
         json.dumps(body, indent=2),
         encoding="utf-8",

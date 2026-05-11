@@ -1,4 +1,4 @@
-"""hf_cluster_optimizer.models.generic_torch -- wrap any torch.nn.Module from a dotted path.
+"""modallabs.models.generic_torch -- wrap any torch.nn.Module from a dotted path.
 
 Cfg fields:
   module_path: "package.module:ClassName" or "package.module.ClassName"
@@ -19,12 +19,12 @@ import importlib
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from hf_cluster_optimizer.base import (
+from modallabs.base import (
     Trainer, TrainerEpochResult, TrainerSetup, TrainerStepResult,
 )
-from hf_cluster_optimizer.registry import register
+from modallabs.registry import register
 
-from hf_cluster_optimizer.models._torch_common import (
+from modallabs.models._torch_common import (
     load_xy_table,
     mean_metrics,
     resolve_device,

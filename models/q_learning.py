@@ -1,4 +1,4 @@
-"""hf_cluster_optimizer.models.q_learning -- DQN-style Q-learning trainer.
+"""modallabs.models.q_learning -- DQN-style Q-learning trainer.
 
 Supports double-Q + dueling head + optional uniform replay buffer.
 Trains on a synthetic deterministic 1-D bandit-like environment by
@@ -10,12 +10,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from hf_cluster_optimizer.base import (
+from modallabs.base import (
     Trainer, TrainerEpochResult, TrainerSetup, TrainerStepResult,
 )
-from hf_cluster_optimizer.registry import register
+from modallabs.registry import register
 
-from hf_cluster_optimizer.models._torch_common import mean_metrics, resolve_device
+from modallabs.models._torch_common import mean_metrics, resolve_device
 
 
 def _build_q_net(state_dim: int, n_actions: int, hidden: int, dueling: bool):
@@ -103,7 +103,7 @@ class QLearningTrainer(Trainer):
 
         path = self.config.get("transitions_path")
         if path:
-            from hf_cluster_optimizer.data_io import load_table
+            from modallabs.data_io import load_table
             df = load_table(Path(path))
             S_cols = self.config.get("state_columns")
             S2_cols = self.config.get("next_state_columns") or S_cols

@@ -1,9 +1,9 @@
-"""hf_cluster_optimizer.models.hf_transformer -- generic HuggingFace AutoModel wrapper.
+"""modallabs.models.hf_transformer -- generic HuggingFace AutoModel wrapper.
 
 One Trainer class that dispatches on cfg.hf_task to construct the right
 AutoModelFor* head, the right tokenizer / processor / feature extractor,
 and a sensible default dataset adapter. Each task is registered as its
-own hf_cluster_optimizer type (hf_sequence_classification, hf_causal_lm, ...)
+own modallabs type (hf_sequence_classification, hf_causal_lm, ...)
 mapped to a different default hf_task value.
 
 Cfg fields (common):
@@ -25,12 +25,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from hf_cluster_optimizer.base import (
+from modallabs.base import (
     Trainer, TrainerEpochResult, TrainerSetup, TrainerStepResult,
 )
-from hf_cluster_optimizer.registry import register
+from modallabs.registry import register
 
-from hf_cluster_optimizer.models._torch_common import mean_metrics, resolve_device
+from modallabs.models._torch_common import mean_metrics, resolve_device
 
 
 # Map cfg.type -> default hf_task. Each entry = (auto_model_attr, kind).

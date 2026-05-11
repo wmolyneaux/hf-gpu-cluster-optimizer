@@ -1,11 +1,9 @@
-# HF Cluster Optimizer
+# modallabs
 
-> A HuggingFace-native concurrent training harness for GPU clusters.
+> Train a fleet of ML models in one run. Locally on your dev box, or
+> on Modal Labs cloud. Same code path, same checkpoints, same metrics.
 
-Train a fleet of ML models in one run. Locally on your dev box, or
-on Modal Labs cloud. Same code path, same checkpoints, same metrics.
-
-`hf_cluster_optimizer` is a thin, opinionated training harness: write a tiny
+`modallabs` is a thin, opinionated training harness: write a tiny
 `Trainer` once, register it under a name, and now your model trains
 concurrently alongside every other registered model from a single
 YAML config. Heavy on HuggingFace support out of the box, with
@@ -18,7 +16,7 @@ You probably already have one bespoke training script per model.
 That's fine for one model. With five it's friction; with ten it's
 your full-time job.
 
-`hf_cluster_optimizer` flattens the fleet:
+`modallabs` flattens the fleet:
 
 - **One config, many models.** A single `concurrent_train --config X.yaml`
   trains every entry in parallel. Each runs in its own subprocess,
@@ -43,7 +41,7 @@ your full-time job.
 
 Out of the box:
 
-| Architecture family | Example HF checkpoint | HF Cluster Optimizer `type` |
+| Architecture family | Example HF checkpoint | modallabs `type` |
 |---|---|---|
 | BERT-style encoders | `bert-base-uncased`, `roberta-base`, `microsoft/deberta-v3-base` | `hf_sequence_classification` |
 | GPT / Llama / Mistral | `gpt2`, `meta-llama/Llama-3.2-1B`, `mistralai/Mistral-7B-v0.3` | `hf_causal_lm` |
@@ -112,9 +110,9 @@ runs:
 ### 3. Train them all in parallel
 
 ```bash
-python -m hf_cluster_optimizer.concurrent_train --config my_run.yaml
+python -m modallabs.concurrent_train --config my_run.yaml
 # or, if you installed via pyproject.toml:
-hfco-train --config my_run.yaml
+modallabs-train --config my_run.yaml
 ```
 
 Each model trains in its own process; per-run status, metrics, and
@@ -123,7 +121,7 @@ checkpoints land in `runs/<run_id>/<run_name>/`.
 ### 4. Resume after a crash
 
 ```bash
-hfco-train --config my_run.yaml --resume
+modallabs-train --config my_run.yaml --resume
 ```
 
 Successful runs are skipped; failed or interrupted runs restart from
@@ -141,7 +139,7 @@ modal token new
 ### 2. Pre-flight cost preview
 
 ```bash
-python hf_cluster_optimizer/modal_app.py --config my_run.yaml --dry-run
+python modallabs/modal_app.py --config my_run.yaml --dry-run
 ```
 
 You'll see something like:
@@ -153,21 +151,21 @@ You'll see something like:
    run #3: vit_classifier       gpu=T4        timeout=2.00h*  worst=2.00h ~= $0.72  (est=0.50h ~= $0.18)
    --
    Total WORST-CASE cost (every run hits its max_runtime_sec timeout): $1.40
-   Cost ceiling (gates on worst-case): $25.00 (override via env HFCO_MAX_USD)
+   Cost ceiling (gates on worst-case): $25.00 (override via env MODALLABS_MAX_USD)
    Hard per-run timeout: 4.0h default (override per-run via cfg.modal.max_runtime_sec)
    * = per-run override (3 of 3 runs)
 
 Proceed: re-run without --dry-run to actually launch.
 ```
 
-If the worst-case total exceeds your `HFCO_MAX_USD` ceiling, you
+If the worst-case total exceeds your `MODALLABS_MAX_USD` ceiling, you
 get a `BLOCKED` line instead and the CLI exits with code `2` -- safe
 for `set -e` shell pipelines and CI gates.
 
 ### 3. Launch
 
 ```bash
-modal run hf_cluster_optimizer/modal_app.py --config my_run.yaml
+modal run modallabs/modal_app.py --config my_run.yaml
 ```
 
 Each run gets its own `@app.function(gpu=...)` instance with a hard
@@ -175,19 +173,19 @@ Each run gets its own `@app.function(gpu=...)` instance with a hard
 Modal volume; sync back with:
 
 ```bash
-modal volume get hfco-runs runs/
+modal volume get modallabs-runs runs/
 ```
 
 ## Cost controls (Modal)
 
-Cloud GPU bills get out of hand fast. `hf_cluster_optimizer` ships with five
+Cloud GPU bills get out of hand fast. `modallabs` ships with five
 guardrails on by default:
 
 | Guardrail | Default | How to override |
 |---|---|---|
 | Per-run timeout (Modal-enforced) | 4 hours | `cfg.modal.max_runtime_sec` per run |
 | Default GPU | `T4` (cheapest) | `cfg.modal.gpu` per run |
-| Total-cost ceiling (worst-case) | `$25` across all runs | `export HFCO_MAX_USD=<dollars>` |
+| Total-cost ceiling (worst-case) | `$25` across all runs | `export MODALLABS_MAX_USD=<dollars>` |
 | Auto GPU selector | `T4` for <7B, `A10G` for 7-30B, `A100-80G` for >30B | Set `cfg.modal.gpu: auto` to opt in; explicit values still win |
 | Warm-pool keep-alive | OFF (function tears down on completion) | not configurable -- containers always shut down |
 
@@ -195,7 +193,7 @@ The dry-run preview prints **worst-case cost** -- what you actually
 pay if a model hangs and burns through its `max_runtime_sec` timeout.
 The cost ceiling gates on that worst-case number, not the optimistic
 `epochs * est_sec_per_epoch` estimate. If total worst-case exceeds
-`HFCO_MAX_USD`, the launcher refuses to start.
+`MODALLABS_MAX_USD`, the launcher refuses to start.
 
 ## GPU burn minimization checklist
 
@@ -205,14 +203,14 @@ launching a Modal run:
 1. **Always start with `--dry-run`.** It prints worst-case cost per
    run and ceiling status. Review the breakdown before you spend a
    dollar.
-2. **Set `HFCO_MAX_USD` as a hard kill-switch.**
-   `export HFCO_MAX_USD=10` blocks any launch whose worst-case
+2. **Set `MODALLABS_MAX_USD` as a hard kill-switch.**
+   `export MODALLABS_MAX_USD=10` blocks any launch whose worst-case
    total exceeds $10. Make this your default in `~/.bashrc`.
 3. **Use `--resume` to skip done runs.** Already-done runs are
    filtered BEFORE GPU allocation -- a resume on a fully-completed
    run_id costs zero GPU dollars. (A tiny CPU probe runs to consult
    the volume; that's pennies at most.)
-4. **Iterate on CPU first.** `python -m hf_cluster_optimizer.concurrent_train
+4. **Iterate on CPU first.** `python -m modallabs.concurrent_train
    --config X.yaml --force-cpu --max-workers 1` runs the orchestrator
    end-to-end with no GPU allocations anywhere. Reserve GPU for runs
    you've already smoke-tested locally.
@@ -234,7 +232,7 @@ launching a Modal run:
    `elapsed_sec` and `best_metric` land in the summary. Compare
    `elapsed_sec` against your `max_runtime_sec` to spot runs that are
    eating their full timeout (= probable hang, not progress).
-10. **No warm-pool keep-alive.** `hf_cluster_optimizer` deliberately does not
+10. **No warm-pool keep-alive.** `modallabs` deliberately does not
     pass `keep_warm=N` or `min_containers=N`. Containers exit on
     function return; your bill stops the second the run finishes.
 
@@ -250,7 +248,7 @@ runs/<run_id>/<run_name>/
   best_checkpoint.pt       -- best-on-val checkpoint
   config_resolved.yaml     -- the exact cfg used
   log.txt                  -- captured stdout + stderr
-  .hfco_done               -- presence = run completed cleanly
+  .modallabs_done          -- presence = run completed cleanly
 ```
 
 The orchestrator writes a consolidated `runs/<run_id>/summary.json`
@@ -312,7 +310,7 @@ register it, add a smoke entry. About 80 lines for a typical port.
 ## Module layout
 
 ```
-hf_cluster_optimizer/
+modallabs/
   base.py              -- abstract Trainer + result dataclasses
   registry.py          -- name -> Trainer class
   runner.py            -- single-run executor (cfg -> result)
@@ -333,13 +331,13 @@ hf_cluster_optimizer/
     q_learning.py      -- DQN with double-Q + dueling head
     diffusion.py       -- minimal DDPM (smoke-friendly)
     ...
+  configs/
+    _template.yaml     -- documented schema
+    all_models.yaml    -- demo: 6+ model families in one run
+    hf_examples.yaml   -- one example per HF architecture
+    cost_controlled_modal.yaml  -- Modal cost-knob demo
   tests/
     smoke.py           -- end-to-end smoke + determinism check
-configs/                 -- example orchestrator configs (top-level)
-  _template.yaml         -- documented schema
-  all_models.yaml        -- demo: 6+ model families in one run
-  hf_examples.yaml       -- one example per HF architecture
-  cost_controlled_modal.yaml  -- Modal cost-knob demo
 ```
 
 ## Design constraints

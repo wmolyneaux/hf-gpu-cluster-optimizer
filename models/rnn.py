@@ -1,10 +1,10 @@
-"""hf_cluster_optimizer.models.rnn -- vanilla RNN and GRU sequence trainers."""
+"""modallabs.models.rnn -- vanilla RNN and GRU sequence trainers."""
 from __future__ import annotations
 
 from typing import Any, Dict
 
-from hf_cluster_optimizer.registry import register
-from hf_cluster_optimizer.models._seq_base import SequenceTrainerBase
+from modallabs.registry import register
+from modallabs.models._seq_base import SequenceTrainerBase
 
 
 def _make_rnn_module(cell: str, in_dim: int, hidden: int, layers: int, n_out: int):
