@@ -1,0 +1,68 @@
+name: Publish to PyPI
+
+# Builds an sdist + wheel and publishes them to PyPI when a GitHub
+# Release is published (create the release from a `vX.Y.Z` tag).
+#
+# Auth: PyPI Trusted Publishing (OIDC) -- no API token stored in the
+# repo. One-time setup on PyPI: add this repo + the `publish.yml`
+# workflow + the `pypi` environment as a trusted publisher for the
+# `modallabs` project (https://docs.pypi.org/trusted-publishers/).
+# A `release/v1` of pypa/gh-action-pypi-publish does the upload.
+#
+# To do a dry run / inspect the artifacts without publishing, trigger
+# the workflow manually (workflow_dispatch) -- it builds + uploads the
+# artifacts to the run but the publish job only runs on a release.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: modallabs
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist + wheel
+        working-directory: modallabs
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Smoke-test the built wheel
+        working-directory: modallabs
+        run: |
+          python -m pip install dist/*.whl
+          python -c "import modallabs; print('modallabs', modallabs.__version__)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: modallabs/dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write   # required for PyPI Trusted Publishing (OIDC)
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

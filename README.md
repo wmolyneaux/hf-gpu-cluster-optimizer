@@ -1,5 +1,9 @@
 # modallabs
 
+[![CI](https://github.com/wmolyneaux/hf-cluster-optimizer/actions/workflows/ci.yml/badge.svg)](https://github.com/wmolyneaux/hf-cluster-optimizer/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://github.com/wmolyneaux/hf-cluster-optimizer)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 > Train a fleet of ML models in one run. Locally on your dev box, or
 > on Modal Labs cloud. Same code path, same checkpoints, same metrics.
 
@@ -60,13 +64,47 @@ Out of the box:
 If your architecture isn't on the list, see `PORTING.md` -- adding
 a new one is three steps and ~80 lines.
 
+### Parameter-efficient fine-tuning (LoRA)
+
+Any `hf_*` run can be wrapped in a PEFT adapter (LoRA by default, IA3
+also supported) by adding a `peft:` block to its `config:`. Full
+fine-tunes of 1B+ models don't fit on a consumer GPU; LoRA does. Only
+the adapter is written to the checkpoint directory -- a few MB, not
+the full model -- so it stays `push_to_hub`-friendly. The block is
+inert when absent, so existing configs are unchanged. Needs the `peft`
+extra (`pip install -e .[peft]`).
+
+```yaml
+runs:
+  - name: llama_lora
+    type: hf_causal_lm
+    config:
+      hf_model_name: meta-llama/Llama-3.2-1B
+      epochs: 1
+      batch_size: 4
+      lr: 2e-4
+      peft:
+        method: lora            # or: ia3
+        r: 16
+        lora_alpha: 32
+        lora_dropout: 0.05
+        target_modules: [q_proj, v_proj]   # omit to let PEFT auto-infer
+```
+
+Everything except `method` is forwarded verbatim to the PEFT config
+constructor, so any `LoraConfig` / `IA3Config` keyword works.
+
 ## Quick start (local)
 
 ### 1. Install
 
 ```bash
 pip install -e .[hf]            # HuggingFace + torch
-pip install -e .[full]          # everything (boosting + Modal too)
+pip install -e .[full]          # everything (boosting + Modal + peft + tensorboard)
+pip install -e .[peft]          # LoRA / IA3 parameter-efficient fine-tuning
+pip install -e .[tensorboard]   # mirror metrics into TensorBoard
+pip install -e .[wandb]         # mirror metrics into Weights & Biases
+pip install -e .[dev]           # ruff + mypy + pre-commit + build
 ```
 
 ### 2. Pick a config
@@ -126,6 +164,29 @@ modallabs-train --config my_run.yaml --resume
 
 Successful runs are skipped; failed or interrupted runs restart from
 scratch.
+
+### 5. Summarize the results
+
+```bash
+modallabs-report runs/experiment_01
+# point it at one run for the per-epoch metric history:
+modallabs-report runs/experiment_01/bert_classifier
+# machine-readable:
+modallabs-report runs/experiment_01 --json
+```
+
+```
+run_id: experiment_01   runs: 3   succeeded: 3   failed: 0   wall-clock: 42.2m
+
+RUN              PHASE      TYPE                          EPOCHS  BEST    ELAPSED  CHECKPOINT
+---------------  ---------  ----------------------------  ------  ------  -------  ----------------
+bert_classifier  succeeded  hf_sequence_classification    3       0.873   6.9m     checkpoint
+gpt2_finetune    succeeded  hf_causal_lm                  1       0.41    7.1m     checkpoint
+vit_classifier   succeeded  hf_image_classification       5       0.612   28.2m    checkpoint
+```
+
+Exit code is non-zero if any run did not succeed, so it doubles as a
+CI gate.
 
 ## Quick start (Modal Labs cloud)
 
@@ -243,13 +304,20 @@ For run `<run_name>` under run_id `<run_id>`:
 ```
 runs/<run_id>/<run_name>/
   status.json              -- {phase, started_at, ...}
+  manifest.json            -- provenance: git commit + dirty flag, resolved
+                              library versions, config SHA-256, python/platform
   metrics.jsonl            -- one JSON line per train + eval step
-  checkpoint.pt            -- final model checkpoint (or .joblib / dir)
+  checkpoint.pt            -- final model checkpoint (or .joblib / dir; LoRA = adapter dir)
   best_checkpoint.pt       -- best-on-val checkpoint
   config_resolved.yaml     -- the exact cfg used
   log.txt                  -- captured stdout + stderr
+  tensorboard/             -- present only if logger: tensorboard
   .modallabs_done          -- presence = run completed cleanly
 ```
+
+Run `modallabs-report runs/<run_id>` for a per-run table, or
+`modallabs-report runs/<run_id>/<run_name>` for that run's per-epoch
+metric history.
 
 The orchestrator writes a consolidated `runs/<run_id>/summary.json`
 after every run finishes:
@@ -271,6 +339,24 @@ after every run finishes:
     }
   ]
 }
+```
+
+## External metric trackers (optional)
+
+`metrics.jsonl` is always the source of truth. A run can *additionally*
+mirror every metric line into TensorBoard and/or Weights & Biases by
+setting `logger:` on the run (string `tensorboard` / `wandb` /
+`tensorboard,wandb`, or a dict with backend options) -- or set the
+`MODALLABS_LOGGER` env var as a default for all runs. Best-effort: a
+backend that isn't installed is skipped with a log line and the run
+continues. `pip install -e .[tensorboard]` / `.[wandb]` to enable.
+
+```yaml
+runs:
+  - name: my_run
+    type: hf_causal_lm
+    logger: tensorboard          # writes runs/<run_id>/my_run/tensorboard/
+    config: {...}
 ```
 
 ## Concurrency model
@@ -318,6 +404,8 @@ modallabs/
   modal_app.py         -- Modal Labs orchestrator + cost controls
   seed.py              -- deterministic seed setup
   metrics.py           -- JSON-line metrics writer + reader
+  metric_sinks.py      -- optional TensorBoard / wandb mirrors
+  report.py            -- `modallabs-report`: summarize a run directory
   checkpoint.py        -- done-sentinel + path helpers
   data_io.py           -- parquet/CSV loader, train/val split
   models/

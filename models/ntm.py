@@ -6,7 +6,6 @@ plugs into the same train/eval surface as the other built-in models.
 """
 from __future__ import annotations
 
-from typing import Any, Dict
 
 from modallabs.registry import register
 from modallabs.models._seq_base import SequenceTrainerBase

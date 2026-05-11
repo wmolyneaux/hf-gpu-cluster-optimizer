@@ -17,7 +17,6 @@ import logging
 import sys
 import time
 import traceback
-from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -33,7 +32,7 @@ from modallabs.checkpoint import (
     is_done,
     write_done,
 )
-from modallabs.metrics import MetricsWriter
+from modallabs.metric_sinks import make_metrics_writer
 from modallabs.registry import get as registry_get
 from modallabs.seed import set_global_seed
 
@@ -116,6 +115,104 @@ def _write_resolved_cfg(run_dir: Path, cfg: Dict[str, Any]) -> None:
     safe = _yaml_safe(cfg)
     (run_dir / "config_resolved.yaml").write_text(
         yaml.safe_dump(safe, sort_keys=False), encoding="utf-8",
+    )
+
+
+# Libraries whose installed version is worth pinning in the run manifest
+# (only the ones that are actually installed are recorded).
+_MANIFEST_PKGS = (
+    "torch", "transformers", "datasets", "accelerate", "safetensors", "peft",
+    "tokenizers", "numpy", "pandas", "pyarrow", "scikit-learn", "joblib",
+    "lightgbm", "xgboost", "catboost", "modal", "pyyaml", "tensorboard", "wandb",
+)
+
+
+def _git_info() -> Dict[str, Any]:
+    """Best-effort git provenance for the working tree the run was launched from."""
+    import subprocess
+    info: Dict[str, Any] = {}
+    here = Path(__file__).resolve().parent
+    def _git(*args: str) -> Optional[str]:
+        try:
+            out = subprocess.run(
+                ["git", *args], cwd=str(here), capture_output=True, text=True, timeout=5,
+            )
+            if out.returncode == 0:
+                return out.stdout.strip()
+        except Exception:
+            return None
+        return None
+    commit = _git("rev-parse", "HEAD")
+    if commit:
+        info["commit"] = commit
+        info["branch"] = _git("rev-parse", "--abbrev-ref", "HEAD")
+        status = _git("status", "--porcelain")
+        info["dirty"] = bool(status) if status is not None else None
+    return info
+
+
+def _package_versions() -> Dict[str, str]:
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+    except Exception:  # pragma: no cover - importlib.metadata always present on 3.10+
+        return {}
+    out: Dict[str, str] = {}
+    for name in _MANIFEST_PKGS:
+        try:
+            out[name] = version(name)
+        except PackageNotFoundError:
+            continue
+        except Exception:
+            continue
+    return out
+
+
+def _write_manifest(
+    run_dir: Path, run_cfg: Dict[str, Any], *, run_id: str, device: str, started_at: str,
+) -> None:
+    """Write runs/<run_id>/<name>/manifest.json -- reproducibility provenance.
+
+    Best-effort: any failure here is logged and swallowed so it can never
+    abort a training run. Captures git commit + dirty flag, resolved
+    versions of the key ML libraries, a SHA-256 of the resolved config,
+    Python / platform, and the requested device.
+    """
+    import hashlib
+    import platform as _platform
+
+    try:
+        from modallabs import __version__ as _ml_version
+    except Exception:
+        _ml_version = "unknown"
+
+    safe_cfg = _yaml_safe(run_cfg)
+    cfg_bytes = json.dumps(safe_cfg, sort_keys=True, ensure_ascii=True).encode("utf-8")
+    manifest = {
+        "modallabs_version": _ml_version,
+        "run_id": run_id,
+        "run_name": str(run_cfg.get("name", "")),
+        "type": str(run_cfg.get("type", "")),
+        "seed": int(run_cfg.get("seed", 0)),
+        "device_requested": str(run_cfg.get("device", "auto")),
+        "device_resolved": device,
+        "started_at": started_at,
+        "config_sha256": hashlib.sha256(cfg_bytes).hexdigest(),
+        "git": _git_info(),
+        "python": {
+            "version": _platform.python_version(),
+            "implementation": _platform.python_implementation(),
+            "executable": sys.executable,
+        },
+        "platform": {
+            "system": _platform.system(),
+            "release": _platform.release(),
+            "machine": _platform.machine(),
+            "platform": _platform.platform(),
+        },
+        "packages": _package_versions(),
+    }
+    (run_dir / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=True), encoding="utf-8",
     )
 
 
@@ -236,7 +333,10 @@ def train_one(
     last_epoch_metrics: Dict[str, float] = {}
 
     try:
-        with MetricsWriter(metrics_path) as metric_fn:
+        with make_metrics_writer(
+            metrics_path, run_id=run_id, run_name=name, run_dir=run_dir,
+            logger_spec=run_cfg.get("logger"),
+        ) as metric_fn:
             def log_fn(msg: str) -> None:
                 line = f"{_utcnow_iso()} {msg}\n"
                 log_fh.write(line)
@@ -246,6 +346,15 @@ def train_one(
             log_fn(f"resolving device, requested={run_cfg.get('device', 'auto')}")
             device = "cpu" if force_cpu else _resolve_device(run_cfg.get("device"))
             log_fn(f"device={device}")
+
+            # Reproducibility provenance. Best-effort -- never fail the run.
+            try:
+                _write_manifest(
+                    run_dir, run_cfg, run_id=run_id, device=device,
+                    started_at=_utcnow_iso(),
+                )
+            except Exception as exc:
+                log_fn(f"manifest write failed (non-fatal): {exc}")
 
             log_fn(f"set_global_seed({seed})")
             set_global_seed(seed)

@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import sys
 import tempfile
 import traceback
@@ -233,6 +232,43 @@ def main() -> int:
         print(f"  FAIL crash isolation: orchestrator raised {exc}")
         n_fail += 1
         failures.append(f"crash isolation orchestrator: {exc}")
+
+    # ---- Phase 4: report tool ----
+    # The Phase 1 runs landed under base/phase1/<name>/ via train_one, which
+    # does NOT write a summary.json (only the concurrent orchestrator does),
+    # so this also exercises report.collect's sentinel-scan fallback path.
+    print("modallabs smoke: report tool check")
+    group_dir = base / "phase1"
+    if not group_dir.exists():
+        print("  SKIP report tool: no Phase 1 runs landed (all deps skipped)")
+    else:
+        try:
+            from modallabs import report as _report
+            rep = _report.collect(group_dir)
+            text = _report.render(rep)
+            if rep.get("kind") != "group":
+                raise AssertionError(f"expected kind=group, got {rep.get('kind')!r}")
+            if rep.get("n_runs", 0) < 1 or not text:
+                raise AssertionError(
+                    f"empty report: n_runs={rep.get('n_runs')} text_len={len(text)}")
+            # Single-run view on the first successful run.
+            first_ok = next((r for r in rep["runs"] if r.get("phase") == "succeeded"), None)
+            if first_ok is not None:
+                run_rep = _report.collect(group_dir / first_ok["name"])
+                _ = _report.render(run_rep)
+                if run_rep.get("kind") != "run":
+                    raise AssertionError(f"expected kind=run, got {run_rep.get('kind')!r}")
+            # CLI entrypoint should exit 0 on an all-succeeded group.
+            rc_cli = _report.main([str(group_dir)])
+            if rc_cli != 0:
+                raise AssertionError(f"report CLI returned {rc_cli} on a clean group")
+            print(f"  OK   report tool: {rep.get('n_runs')} runs summarized")
+        except Exception as exc:
+            tb = traceback.format_exc()
+            print(f"  FAIL report tool: {exc}")
+            print(tb)
+            n_fail += 1
+            failures.append(f"report tool: {exc}")
 
     print(f"\nmodallabs smoke: ran={n_run} skipped={n_skip} failed={n_fail}")
     if failures:

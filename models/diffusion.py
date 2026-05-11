@@ -7,7 +7,7 @@ data when run on a GPU; for the smoke we stick with 2D.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional
 
 from modallabs.base import (
     Trainer, TrainerEpochResult, TrainerSetup, TrainerStepResult,
@@ -105,7 +105,6 @@ class DiffusionTrainer(Trainer):
         return self._iter(self.X_val)
 
     def train_step(self, batch: Any) -> TrainerStepResult:
-        import torch
         import torch.nn.functional as F
         Xb = batch
         x_t, eps, t_norm = self._sample_noise(Xb)

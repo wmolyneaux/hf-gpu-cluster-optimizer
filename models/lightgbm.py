@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, Optional
 
 from modallabs.base import (
     Trainer, TrainerEpochResult, TrainerSetup, TrainerStepResult,
@@ -84,7 +84,6 @@ class LightGBMTrainer(Trainer):
             self.params.setdefault(k, v)
 
     def _score(self, X, y) -> float:
-        import numpy as np
         from sklearn.metrics import accuracy_score, r2_score
         pred = self.model.predict(X)
         if self.task == "regression":

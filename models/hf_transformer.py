@@ -33,6 +33,26 @@ from modallabs.registry import register
 from modallabs.models._torch_common import mean_metrics, resolve_device
 
 
+# hf_task -> peft TaskType member name. Used only when a `peft:` block is
+# present in the config. Tasks without a clean PEFT task type map to None
+# (LoraConfig / IA3Config accept task_type=None -- you just lose the
+# auto modules_to_save for that head).
+_PEFT_TASK_TYPE: Dict[str, Optional[str]] = {
+    "sequence_classification": "SEQ_CLS",
+    "token_classification":    "TOKEN_CLS",
+    "causal_lm":               "CAUSAL_LM",
+    "seq2seq":                 "SEQ_2_SEQ_LM",
+    "qa":                      "QUESTION_ANS",
+    "multiple_choice":         "SEQ_CLS",
+    "masked_lm":               None,
+    "image_classification":    None,
+    "object_detection":        None,
+    "audio_classification":    None,
+    "speech_seq2seq":          "SEQ_2_SEQ_LM",
+    "embedding":               "FEATURE_EXTRACTION",
+}
+
+
 # Map cfg.type -> default hf_task. Each entry = (auto_model_attr, kind).
 _TASK_TABLE: Dict[str, Tuple[str, str]] = {
     "sequence_classification": ("AutoModelForSequenceClassification", "text_cls"),
@@ -77,6 +97,7 @@ class HFTrainer(Trainer):
         self._train_buf: List[Dict[str, float]] = []
         self._eval_buf: List[Dict[str, float]] = []
         self._best: Optional[float] = None
+        self._is_peft = bool(self.config.get("peft"))
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> "HFTrainer":
@@ -95,6 +116,72 @@ class HFTrainer(Trainer):
         if self.hf_task == "token_classification":
             kwargs["num_labels"] = self.n_classes
         return AutoCls.from_pretrained(self.hf_model_name, **kwargs)
+
+    def _maybe_wrap_peft(self, model, *, log_fn=None):
+        """If cfg has a `peft:` block, wrap `model` in a PEFT adapter.
+
+        Config shape (everything except `method` is forwarded verbatim to
+        the PEFT config constructor, so any LoraConfig / IA3Config kwarg
+        works)::
+
+            config:
+              hf_model_name: meta-llama/Llama-3.2-1B
+              peft:
+                method: lora          # default; also: ia3
+                r: 16
+                lora_alpha: 32
+                lora_dropout: 0.05
+                target_modules: [q_proj, v_proj]   # optional; auto-inferred if omitted
+
+        Returns the (possibly wrapped) model. No-op when `peft:` is absent
+        -- this keeps every existing config bit-for-bit unchanged.
+        """
+        peft_cfg = self.config.get("peft")
+        if not peft_cfg:
+            return model
+        if not isinstance(peft_cfg, dict):
+            raise ValueError(
+                f"cfg.peft must be a mapping (got {type(peft_cfg).__name__}); "
+                f"e.g. peft: {{method: lora, r: 16, lora_alpha: 32}}"
+            )
+        try:
+            import peft  # type: ignore
+        except ImportError as exc:  # pragma: no cover - exercised only without peft
+            raise RuntimeError(
+                "cfg.peft is set but the 'peft' package is not installed. "
+                "Install it with: pip install -e .[peft]  (or: pip install peft)"
+            ) from exc
+
+        kwargs = {k: v for k, v in peft_cfg.items() if k != "method"}
+        method = str(peft_cfg.get("method", "lora")).lower()
+        tt_name = _PEFT_TASK_TYPE.get(self.hf_task)
+        if tt_name is not None and "task_type" not in kwargs:
+            kwargs["task_type"] = getattr(peft.TaskType, tt_name)
+
+        if method == "lora":
+            kwargs.setdefault("r", 8)
+            kwargs.setdefault("lora_alpha", 16)
+            kwargs.setdefault("lora_dropout", 0.0)
+            peft_config = peft.LoraConfig(**kwargs)
+        elif method == "ia3":
+            peft_config = peft.IA3Config(**kwargs)
+        else:
+            raise ValueError(
+                f"cfg.peft.method={method!r} not supported. Supported: 'lora', 'ia3'. "
+                f"For other PEFT methods, port them the same way in _maybe_wrap_peft."
+            )
+
+        wrapped = peft.get_peft_model(model, peft_config)
+        if log_fn is not None:
+            try:
+                tp = sum(p.numel() for p in wrapped.parameters() if p.requires_grad)
+                total = sum(p.numel() for p in wrapped.parameters())
+                pct = 100.0 * tp / max(1, total)
+                log_fn(f"peft({method}): trainable params {tp:,} / {total:,} ({pct:.3f}%)")
+            except Exception:
+                pass
+        self._is_peft = True
+        return wrapped
 
     def _build_tokenizer_or_processor(self):
         import transformers
@@ -214,7 +301,6 @@ class HFTrainer(Trainer):
         return [lst[i:i+B] for i in range(0, len(lst), B)]
 
     def _chunk_text_cls(self, enc, labels):
-        import torch
         B = self.batch_size
         n = enc["input_ids"].shape[0]
         train_n = max(1, int(n * 0.8))
@@ -234,11 +320,9 @@ class HFTrainer(Trainer):
         return train_b, val_b
 
     def _chunk_token_cls(self, enc, labels):
-        import torch
         return self._chunk_text_cls(enc, labels)
 
     def _chunk_lm(self, enc, kind):
-        import torch
         B = self.batch_size
         n = enc["input_ids"].shape[0]
         train_n = max(1, int(n * 0.8))
@@ -334,8 +418,15 @@ class HFTrainer(Trainer):
             )
         self.device = resolve_device(setup.device)
         self._build_tokenizer_or_processor()
-        self.model = self._build_model().to(self.device)
-        self.opt = torch.optim.AdamW(self.model.parameters(), lr=self.lr)
+        model = self._build_model()
+        model = self._maybe_wrap_peft(model, log_fn=setup.log_fn)
+        self.model = model.to(self.device)
+        # With PEFT only the adapter params have requires_grad=True; pass
+        # just those to the optimizer. For a full fine-tune this is every
+        # parameter, so behavior is unchanged when no `peft:` block is set.
+        self.opt = torch.optim.AdamW(
+            (p for p in self.model.parameters() if p.requires_grad), lr=self.lr,
+        )
         self.train_batches, self.val_batches = self._make_batches(setup.seed)
 
     def _to_device(self, batch):
@@ -406,7 +497,16 @@ class HFTrainer(Trainer):
         target = Path(path)
         if target.suffix in (".pt", ".pth", ".joblib", ".json", ".safetensors"):
             target = target.with_suffix("")
-        self.model = AutoCls.from_pretrained(target).to(self.device)
+        if self._is_peft or (target / "adapter_config.json").exists():
+            # PEFT checkpoints store only the adapter (+ any modules_to_save
+            # head). Rebuild the base model from hf_model_name, then attach
+            # the adapter from disk.
+            import peft  # type: ignore
+            base = self._build_model()
+            self.model = peft.PeftModel.from_pretrained(base, target).to(self.device)
+            self._is_peft = True
+        else:
+            self.model = AutoCls.from_pretrained(target).to(self.device)
 
 
 class _nullctx:

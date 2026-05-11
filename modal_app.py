@@ -39,7 +39,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 
 # -- Modal SDK (optional import; the file is also runnable as a CLI
@@ -219,7 +219,7 @@ def _print_dry_run(cfg: Dict[str, Any]) -> bool:
               f"{timeout_str}  "
               f"worst={b['worst_sec']/3600:.2f}h ~= ${b['worst_usd']:.2f}  "
               f"(est={b['est_sec']/3600:.2f}h ~= ${b['est_usd']:.2f})")
-    print(f"   --")
+    print("   --")
     print(f"   Total WORST-CASE cost (every run hits its max_runtime_sec timeout): ${total:.2f}")
     print(f"   Cost ceiling (gates on worst-case): ${_max_total_usd():.2f} "
           f"(override via env MODALLABS_MAX_USD)")
@@ -231,8 +231,8 @@ def _print_dry_run(cfg: Dict[str, Any]) -> bool:
     if blocked:
         print()
         print(f"   !! BLOCKED: worst-case ${total:.2f} > ${_max_total_usd():.2f} ceiling.")
-        print(f"   !! Either lower per-run max_runtime_sec / GPU tier,")
-        print(f"   !! or raise the ceiling: export MODALLABS_MAX_USD=<dollars>")
+        print("   !! Either lower per-run max_runtime_sec / GPU tier,")
+        print("   !! or raise the ceiling: export MODALLABS_MAX_USD=<dollars>")
         print()
         print("Cannot proceed: lower the cost or raise MODALLABS_MAX_USD.")
     else:

@@ -8,7 +8,7 @@ HuggingFace `datasets` integrations have a unified entry point.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Optional, Sequence, Tuple
 
 
 def resolve_path(p: str, data_root: Optional[Path] = None) -> Path:
@@ -63,7 +63,6 @@ def split_train_val(
     Otherwise it's a seeded random shuffle split.
     """
     import numpy as np
-    import pandas as pd
     n = len(df)
     if n == 0:
         return df, df

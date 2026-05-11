@@ -82,7 +82,6 @@ class XGBoostTrainer(Trainer):
             self.params.setdefault(k, v)
 
     def _score(self, X, y) -> float:
-        import numpy as np
         import xgboost as xgb
         from sklearn.metrics import accuracy_score, r2_score
         d = xgb.DMatrix(X)

@@ -23,6 +23,20 @@ runs:
     # orchestrator pins one GPU per worker via CUDA_VISIBLE_DEVICES.
     device: auto
 
+    # Optional. Mirror this run's metrics into external trackers IN
+    # ADDITION TO the canonical runs/<run_id>/<name>/metrics.jsonl.
+    # String form: "tensorboard", "wandb", or "tensorboard,wandb".
+    # Best-effort: a backend that isn't installed is skipped with a log
+    # line (pip install -e .[tensorboard] / .[wandb]). The env var
+    # MODALLABS_LOGGER sets a default for all runs. Dict form passes
+    # options:
+    #   logger:
+    #     tensorboard: true
+    #     wandb:
+    #       project: my-project
+    #       entity: my-team
+    # logger: tensorboard
+
     # Optional. Modal-specific overrides. Ignored by local orchestrator.
     modal:
       # Modal GPU type. T4 (default, cheapest), L4, A10G, L40S, A100-40G,
@@ -56,6 +70,21 @@ runs:
       lr: 5e-5
       batch_size: 8
       epochs: 1
+
+      # ---------- Optional: parameter-efficient fine-tuning (hf_* types) ----------
+      # Wraps the model in a PEFT adapter before training -- lets 1B+
+      # models fine-tune on a single consumer GPU. Requires the `peft`
+      # extra: pip install -e .[peft]. Inert when this block is absent.
+      # Only the adapter is saved to the checkpoint dir (a few MB), not
+      # the full model. Every key except `method` is forwarded verbatim
+      # to the PEFT config constructor, so any LoraConfig / IA3Config
+      # keyword works (target_modules, modules_to_save, bias, ...).
+      # peft:
+      #   method: lora           # default; also: ia3
+      #   r: 16
+      #   lora_alpha: 32
+      #   lora_dropout: 0.05
+      #   target_modules: [q_proj, v_proj]   # omit to let PEFT auto-infer
 
       # ---------- Optional: real data via local parquet ----------
       # data_path: data/my_dataset.parquet

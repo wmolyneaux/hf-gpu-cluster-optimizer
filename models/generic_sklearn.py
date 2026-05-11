@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, Optional
 
 from modallabs.base import (
     Trainer, TrainerEpochResult, TrainerSetup, TrainerStepResult,

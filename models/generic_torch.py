@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Tuple
 
 from modallabs.base import (
     Trainer, TrainerEpochResult, TrainerSetup, TrainerStepResult,
@@ -99,7 +99,6 @@ class GenericTorchTrainer(Trainer):
         raise ValueError(f"unknown optimizer {self.opt_name!r}")
 
     def setup(self, setup: TrainerSetup) -> None:
-        import torch
         self.device = resolve_device(setup.device)
         if not self.module_path:
             raise ValueError("generic_torch requires cfg.module_path (dotted-path)")

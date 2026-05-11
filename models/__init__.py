@@ -7,7 +7,6 @@ Each submodule is wrapped in try/except so a missing optional dep
 from __future__ import annotations
 
 import logging
-import warnings
 
 logger = logging.getLogger(__name__)
 

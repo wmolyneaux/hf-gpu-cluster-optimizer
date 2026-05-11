@@ -7,6 +7,37 @@ on:
     branches: [main]
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      # Same checkout-into-subdir trick as the smoke job below: the repo
+      # content is the package's own files (flat layout), so it must live
+      # under a "modallabs/" directory for `import modallabs` to resolve.
+      - uses: actions/checkout@v5
+        with:
+          path: modallabs
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install package + lint tools
+        working-directory: modallabs
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install ruff mypy
+
+      - name: Ruff
+        working-directory: modallabs
+        run: ruff check .
+
+      - name: Mypy (informational)
+        working-directory: modallabs
+        continue-on-error: true
+        run: mypy --ignore-missing-imports --no-error-summary .
+
   smoke:
     runs-on: ${{ matrix.os }}
     strategy:
@@ -22,20 +53,20 @@ jobs:
       # and smoke-tested under locally. Without this the repo content is
       # the package's own files at the workspace root, where neither
       # `import modallabs` nor `python -m modallabs.tests.smoke` resolve.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: modallabs
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install core deps
+      - name: Install package (core deps)
         working-directory: modallabs
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -e .
 
       - name: Install torch + sklearn (smoke deps)
         run: |

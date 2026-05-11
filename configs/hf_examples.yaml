@@ -30,6 +30,28 @@ runs:
       batch_size: 4
       n: 16
 
+  - name: gpt2_causal_lm_lora
+    type: hf_causal_lm
+    seed: 42
+    config:
+      hf_model_name: sshleifer/tiny-gpt2
+      max_length: 32
+      epochs: 1
+      batch_size: 4
+      n: 16
+      # Parameter-efficient fine-tuning (LoRA). Requires the `peft`
+      # extra: pip install -e .[peft]. For a real run, point
+      # hf_model_name at e.g. meta-llama/Llama-3.2-1B with
+      # target_modules: [q_proj, v_proj] -- only the LoRA adapter is
+      # saved (a few MB), not the full model. Omit target_modules to
+      # let PEFT auto-infer them for the architecture.
+      peft:
+        method: lora        # or: ia3
+        r: 8
+        lora_alpha: 16
+        lora_dropout: 0.05
+        target_modules: [c_attn]
+
   - name: t5_seq2seq
     type: hf_seq2seq
     seed: 42
