@@ -1,0 +1,101 @@
+# modallabs orchestrator config template.
+# Every field is documented inline. Copy this file, edit, and pass to
+# `python -m modallabs.concurrent_train --config <your.yaml>` or
+# `modal run modallabs/modal_app.py --config <your.yaml>`.
+
+# Optional. Becomes the parent directory under runs/. If omitted, an
+# ISO timestamp is used.
+run_id: example_run
+
+# Required. List of training runs to fan out concurrently.
+runs:
+  - # Required. Folder name under runs/<run_id>/.
+    name: example_run_name
+
+    # Required. Registered model type. See `python -c "import modallabs.models;
+    # from modallabs.registry import list_types; print(list_types())"` for the full list.
+    type: hf_sequence_classification
+
+    # Optional. Per-run RNG seed. Defaults to 0.
+    seed: 42
+
+    # Optional. Device hint. "auto" picks cuda > mps > cpu. The local
+    # orchestrator pins one GPU per worker via CUDA_VISIBLE_DEVICES.
+    device: auto
+
+    # Optional. Mirror this run's metrics into external trackers IN
+    # ADDITION TO the canonical runs/<run_id>/<name>/metrics.jsonl.
+    # String form: "tensorboard", "wandb", or "tensorboard,wandb".
+    # Best-effort: a backend that isn't installed is skipped with a log
+    # line (pip install -e .[tensorboard] / .[wandb]). The env var
+    # MODALLABS_LOGGER sets a default for all runs. Dict form passes
+    # options:
+    #   logger:
+    #     tensorboard: true
+    #     wandb:
+    #       project: my-project
+    #       entity: my-team
+    # logger: tensorboard
+
+    # Optional. Modal-specific overrides. Ignored by local orchestrator.
+    modal:
+      # Modal GPU type. T4 (default, cheapest), L4, A10G, L40S, A100-40G,
+      # A100-80G, H100, H200. The framework also exposes `auto` to let
+      # the GPU auto-selector pick the smallest GPU that fits the model
+      # by name (e.g., "Llama-3.2-1B" -> T4, "Mistral-7B" -> A10G).
+      # COST KNOB: T4 is ~$0.36/hr; A100-80G is ~$4.00/hr (11x). Pick
+      # the smallest tier that fits, and ALWAYS pin explicitly in
+      # production -- `auto` is convenience for prototyping.
+      gpu: T4
+      # COST KNOB: hard kill the container at this many seconds.
+      # Modal enforces this (not Python) -- a hung CUDA op can NOT
+      # outrun the timeout. Worst-case bill = max_runtime_sec * GPU rate.
+      # Default 14400 (4h). Tighten this aggressively in production.
+      max_runtime_sec: 14400
+      # Optimistic estimate used only for the dry-run "expected" cost
+      # column. The cost CEILING gates on worst-case (max_runtime_sec),
+      # not this number, so over-estimating here is safe but
+      # under-estimating won't actually save you money.
+      est_sec_per_epoch: 60
+
+    # Required. Model-type-specific config. Schema depends on `type`.
+    config:
+      # ---------- HuggingFace fields (apply to hf_* types) ----------
+      hf_model_name: bert-base-uncased
+      hf_task: sequence_classification   # set automatically by hf_*; override if needed
+      max_length: 128
+      n_classes: 2
+
+      # ---------- Common training fields ----------
+      lr: 5e-5
+      batch_size: 8
+      epochs: 1
+
+      # ---------- Optional: parameter-efficient fine-tuning (hf_* types) ----------
+      # Wraps the model in a PEFT adapter before training -- lets 1B+
+      # models fine-tune on a single consumer GPU. Requires the `peft`
+      # extra: pip install -e .[peft]. Inert when this block is absent.
+      # Only the adapter is saved to the checkpoint dir (a few MB), not
+      # the full model. Every key except `method` is forwarded verbatim
+      # to the PEFT config constructor, so any LoraConfig / IA3Config
+      # keyword works (target_modules, modules_to_save, bias, ...).
+      # peft:
+      #   method: lora           # default; also: ia3
+      #   r: 16
+      #   lora_alpha: 32
+      #   lora_dropout: 0.05
+      #   target_modules: [q_proj, v_proj]   # omit to let PEFT auto-infer
+
+      # ---------- Optional: real data via local parquet ----------
+      # data_path: data/my_dataset.parquet
+      # feature_columns: [feat_0, feat_1, feat_2]
+      # label_column: label
+
+      # ---------- Optional: HuggingFace datasets library ----------
+      # hf_dataset:
+      #   path: imdb            # or a local path
+      #   name: null
+      #   split_train: "train[:1000]"
+      #   split_val: "test[:200]"
+      # text_column: text
+      # label_column: label

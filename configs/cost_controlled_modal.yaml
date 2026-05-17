@@ -1,0 +1,72 @@
+# Modal Labs orchestrator config that exercises every cost-control
+# knob in modallabs/modal_app.py.
+#
+# Pre-flight cost preview:
+#   python modallabs/modal_app.py --config modallabs/configs/cost_controlled_modal.yaml --dry-run
+#
+# Live launch:
+#   modal run modallabs/modal_app.py --config modallabs/configs/cost_controlled_modal.yaml
+#
+# Total cost (worst-case wall time) is summed and printed before any
+# GPU spins up. If it exceeds MODALLABS_MAX_USD (default $25), the
+# launcher refuses to start.
+
+run_id: cost_controlled_demo
+runs:
+  - name: small_finetune
+    type: hf_sequence_classification
+    seed: 42
+    modal:
+      gpu: T4              # T4 is the cheapest fit for <1B models
+      max_runtime_sec: 1800   # 30 min hard cap
+      est_sec_per_epoch: 120  # cost-preview hint
+    config:
+      hf_model_name: prajjwal1/bert-tiny
+      n_classes: 2
+      max_length: 64
+      epochs: 1
+      batch_size: 16
+      n: 256
+
+  - name: causal_lm_short
+    type: hf_causal_lm
+    seed: 42
+    modal:
+      gpu: L4              # mid-tier; smallest GPU that fits 1B-3B
+      max_runtime_sec: 3600
+      est_sec_per_epoch: 240
+    config:
+      hf_model_name: sshleifer/tiny-gpt2
+      max_length: 64
+      epochs: 2
+      batch_size: 8
+      n: 128
+
+  - name: seq2seq_short
+    type: hf_seq2seq
+    seed: 42
+    modal:
+      gpu: T4
+      max_runtime_sec: 1800
+      est_sec_per_epoch: 90
+    config:
+      hf_model_name: google/t5-efficient-tiny
+      max_length: 32
+      epochs: 1
+      batch_size: 8
+      n: 128
+
+  - name: q_learning_offline
+    type: q_learning
+    seed: 42
+    modal:
+      gpu: T4              # Q-learning is small; T4 is plenty
+      max_runtime_sec: 1800
+      est_sec_per_epoch: 30
+    config:
+      state_dim: 16
+      n_actions: 5
+      hidden_dim: 64
+      epochs: 5
+      batch_size: 128
+      n: 2048

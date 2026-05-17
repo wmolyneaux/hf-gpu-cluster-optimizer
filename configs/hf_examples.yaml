@@ -1,0 +1,93 @@
+# One example per HuggingFace architecture family. Every model is
+# pinned to a TINY checkpoint so the example finishes on a single GPU
+# (or a fast CPU) in a reasonable amount of time. Swap for production
+# checkpoints in your real config.
+#
+# These run as synthetic-data smoke unless you also pass `hf_dataset:`
+# pointing at a real dataset. The framework downloads the model from
+# the Hub on first run; subsequent runs are cached.
+
+run_id: hf_examples
+runs:
+  - name: bert_sequence_cls
+    type: hf_sequence_classification
+    seed: 42
+    config:
+      hf_model_name: prajjwal1/bert-tiny
+      n_classes: 2
+      max_length: 32
+      epochs: 1
+      batch_size: 4
+      n: 16
+
+  - name: gpt2_causal_lm
+    type: hf_causal_lm
+    seed: 42
+    config:
+      hf_model_name: sshleifer/tiny-gpt2
+      max_length: 32
+      epochs: 1
+      batch_size: 4
+      n: 16
+
+  - name: gpt2_causal_lm_lora
+    type: hf_causal_lm
+    seed: 42
+    config:
+      hf_model_name: sshleifer/tiny-gpt2
+      max_length: 32
+      epochs: 1
+      batch_size: 4
+      n: 16
+      # Parameter-efficient fine-tuning (LoRA). Requires the `peft`
+      # extra: pip install -e .[peft]. For a real run, point
+      # hf_model_name at e.g. meta-llama/Llama-3.2-1B with
+      # target_modules: [q_proj, v_proj] -- only the LoRA adapter is
+      # saved (a few MB), not the full model. Omit target_modules to
+      # let PEFT auto-infer them for the architecture.
+      peft:
+        method: lora        # or: ia3
+        r: 8
+        lora_alpha: 16
+        lora_dropout: 0.05
+        target_modules: [c_attn]
+
+  - name: t5_seq2seq
+    type: hf_seq2seq
+    seed: 42
+    config:
+      hf_model_name: google/t5-efficient-tiny
+      max_length: 32
+      epochs: 1
+      batch_size: 4
+      n: 16
+
+  - name: vit_image_cls
+    type: hf_image_classification
+    seed: 42
+    config:
+      hf_model_name: hf-internal-testing/tiny-random-ViTForImageClassification
+      n_classes: 2
+      epochs: 1
+      batch_size: 4
+      n: 8
+
+  - name: whisper_audio
+    type: hf_whisper
+    seed: 42
+    config:
+      hf_model_name: hf-internal-testing/tiny-random-WhisperForConditionalGeneration
+      n_classes: 2
+      epochs: 1
+      batch_size: 2
+      n: 4
+
+  - name: bert_masked_lm
+    type: hf_masked_lm
+    seed: 42
+    config:
+      hf_model_name: prajjwal1/bert-tiny
+      max_length: 32
+      epochs: 1
+      batch_size: 4
+      n: 16

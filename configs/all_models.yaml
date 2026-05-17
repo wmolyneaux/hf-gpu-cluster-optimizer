@@ -1,0 +1,75 @@
+# Demonstrates running 6+ distinct model families in one orchestrator
+# call. Tiny configs so the run finishes fast on CPU.
+
+run_id: all_models_demo
+runs:
+  - name: torch_module_mlp
+    type: torch_module
+    seed: 42
+    config:
+      module_path: torch.nn:Linear
+      module_kwargs: { in_features: 8, out_features: 3 }
+      task: classification
+      epochs: 2
+      batch_size: 32
+      n: 256
+
+  - name: sklearn_random_forest
+    type: sklearn
+    seed: 42
+    config:
+      estimator_path: sklearn.ensemble:RandomForestClassifier
+      estimator_kwargs: { n_estimators: 16, max_depth: 4 }
+      task: classification
+      n: 256
+      in_dim: 8
+      n_classes: 3
+
+  - name: lightgbm_classifier
+    type: lightgbm
+    seed: 42
+    config:
+      task: classification
+      num_boost_round: 30
+      n: 256
+      in_dim: 8
+      n_classes: 3
+      params: { num_leaves: 15, learning_rate: 0.1 }
+
+  - name: q_learning_smoke
+    type: q_learning
+    seed: 42
+    config:
+      state_dim: 8
+      n_actions: 4
+      hidden_dim: 32
+      epochs: 2
+      batch_size: 64
+      n: 512
+
+  - name: lstm_seq_clf
+    type: lstm
+    seed: 42
+    config:
+      in_dim: 8
+      hidden_dim: 16
+      n_classes: 3
+      seq_len: 8
+      epochs: 2
+      batch_size: 32
+      n: 256
+
+  - name: transformer_seq_clf
+    type: transformer
+    seed: 42
+    config:
+      in_dim: 8
+      hidden_dim: 32
+      d_model: 32
+      nhead: 4
+      num_layers: 1
+      n_classes: 3
+      seq_len: 8
+      epochs: 2
+      batch_size: 32
+      n: 256

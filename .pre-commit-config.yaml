@@ -1,0 +1,25 @@
+# Run `pre-commit install` after `pip install pre-commit` (or `pip install
+# -e .[dev]`). These hooks mirror the CI `lint` job so problems surface
+# before push, not in the PR.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.10
+    hooks:
+      - id: ruff
+        args: [--fix]
+      # Note: `ruff format` is intentionally NOT enabled -- the codebase
+      # has a consistent hand-maintained style; reformatting wholesale is
+      # a separate decision.
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: mixed-line-ending
+        args: [--fix=lf]
