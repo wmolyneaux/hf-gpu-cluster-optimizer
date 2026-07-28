@@ -13,9 +13,28 @@ Tiers:
 
 The MoE two-expert split runs as a KSamplerAdvanced pair: the high-noise expert
 takes steps [0, boundary_step), the low-noise expert [boundary_step, steps].
+
+Standing controls (GATES.md registry, 2026-07-28):
+  C-003 heartbeat   : the poll loop refreshes output_dir/heartbeat.txt every
+                      tick so the L4 dead-man switch (600s no-write kill in
+                      modal_app) never kills a healthy 30-step finals shot.
+  C-004 provenance  : the take manifest records sha256 of every package input
+                      (control, mask, reference), the full prompt/negative
+                      text, model/lora filenames and sampler params -- a board
+                      is falsifiable from its manifest alone.
+  C-005 determinism : the ComfyUI subprocess runs with PYTHONHASHSEED,
+                      CUBLAS_WORKSPACE_CONFIG, NVIDIA_TF32_OVERRIDE pinned and
+                      --deterministic (torch.use_deterministic_algorithms,
+                      warn_only) unless config determinism: false.
+  masks (E: VACE ch.16-31): optional per-shot "control_masks" mp4 in the
+                      package -> LoadVideo -> GetVideoComponents ->
+                      ImageToMask(red) -> WanVaceToVideo control_masks, so the
+                      mask half of the 32 VACE channels carries real signal
+                      instead of constant 0.5.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -23,7 +42,7 @@ import subprocess
 import time
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from modallabs.base import Trainer, TrainerEpochResult, TrainerSetup, TrainerStepResult
 from modallabs.registry import register
@@ -39,9 +58,35 @@ _REQUIRED = ("shots", "epochs", "package_root", "out_prefix",
              "model_high", "model_low", "text_encoder", "vae")
 _SHOT_KEYS = ("name", "control_video", "reference_image", "prompt", "negative_prompt", "seed")
 
+# C-005: pinned env for the ComfyUI subprocess. PYTHONHASHSEED kills dict/set
+# iteration-order drift; CUBLAS_WORKSPACE_CONFIG makes cuBLAS reductions
+# deterministic (required by torch.use_deterministic_algorithms on CUDA);
+# NVIDIA_TF32_OVERRIDE=0 stops TF32 from changing matmul numerics run-to-run.
+_DETERMINISM_ENV = {
+    "PYTHONHASHSEED": "0",
+    "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
+    "NVIDIA_TF32_OVERRIDE": "0",
+}
+
 
 class WanShotError(RuntimeError):
     pass
+
+
+def _shot_input_keys(shot: Dict[str, Any]) -> Tuple[str, ...]:
+    """Package-file keys a shot actually uses. control_masks is optional."""
+    keys: Tuple[str, ...] = ("control_video", "reference_image")
+    if shot.get("control_masks"):
+        keys += ("control_masks",)
+    return keys
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 @register("wan_vace_shot")
@@ -55,6 +100,8 @@ class WanVaceShotTrainer(Trainer):
         self._setup_obj: Optional[TrainerSetup] = None
         self._takes: List[Dict[str, Any]] = []
         self._epoch_metrics: List[Dict[str, float]] = []
+        # C-004: package-relative path -> sha256, filled in setup().
+        self._input_sha: Dict[str, str] = {}
 
     # ------------------------------------------------------------- 1/9
     @classmethod
@@ -84,6 +131,9 @@ class WanVaceShotTrainer(Trainer):
         if cfg.get("stub"):
             # smoke-test mode (PORTING.md step 3): no server, no weights, no GPU.
             setup.log_fn("wan_vace_shot: STUB mode — no ComfyUI, no weights")
+            # C-004 still fires in stub mode: hash whatever package inputs
+            # exist so the provenance control is testable without a GPU.
+            self._hash_inputs(Path(cfg["package_root"]), strict=False)
             return
 
         # model files must exist BEFORE the server starts (fail at minute 0)
@@ -103,11 +153,12 @@ class WanVaceShotTrainer(Trainer):
         inp = _COMFY_DIR / "input"
         inp.mkdir(parents=True, exist_ok=True)
         for s in self._shots:
-            for key in ("control_video", "reference_image"):
+            for key in _shot_input_keys(s):
                 src = pkg / s[key]
                 if not src.exists():
                     raise WanShotError(f"package file missing: {src}")
                 shutil.copy2(src, inp / src.name)
+        self._hash_inputs(pkg, strict=True)  # C-004: hash before any spend
 
         # point ComfyUI's model search at the weights volume
         extra = _COMFY_DIR / "extra_model_paths.yaml"
@@ -120,10 +171,18 @@ class WanVaceShotTrainer(Trainer):
             encoding="utf-8",
         )
 
+        # C-005: determinism env + ComfyUI --deterministic (warn_only torch
+        # deterministic algorithms). On by default; determinism: false opts out.
+        determinism = bool(cfg.get("determinism", True))
+        argv = ["python", "main.py", "--listen", "127.0.0.1", "--port", str(_PORT),
+                "--extra-model-paths-config", str(extra)]
+        env = dict(os.environ)
+        if determinism:
+            env.update(_DETERMINISM_ENV)
+            argv.append("--deterministic")
+            setup.log_fn(f"determinism armed: {sorted(_DETERMINISM_ENV)} + --deterministic")
         self._proc = subprocess.Popen(
-            ["python", "main.py", "--listen", "127.0.0.1", "--port", str(_PORT),
-             "--extra-model-paths-config", str(extra)],
-            cwd=str(_COMFY_DIR),
+            argv, cwd=str(_COMFY_DIR), env=env,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
         )
         t0 = time.time()
@@ -139,8 +198,76 @@ class WanVaceShotTrainer(Trainer):
                 pass
             if time.time() - t0 > 300:
                 raise WanShotError("ComfyUI server did not come up within 300s")
+            self._heartbeat("startup")  # C-003
             time.sleep(2.0)
         setup.log_fn(f"ComfyUI up in {time.time() - t0:.1f}s")
+
+    # ------------------------------------------------------------- controls
+    def _hash_inputs(self, pkg: Path, strict: bool) -> None:
+        """C-004: sha256 every package input a shot names, cached by rel path.
+
+        strict=True (real runs) raises on a missing file; strict=False (stub)
+        records None so the manifest shows the hole instead of hiding it.
+        """
+        for s in self._shots:
+            for key in _shot_input_keys(s):
+                rel = s[key]
+                if rel in self._input_sha:
+                    continue
+                src = pkg / rel
+                if src.exists():
+                    self._input_sha[rel] = _sha256_file(src)
+                elif strict:
+                    raise WanShotError(f"cannot hash missing package file: {src}")
+
+    def _heartbeat(self, note: str) -> None:
+        """C-003: refresh output_dir/heartbeat.txt so the L4 dead-man switch
+        (600s no-write kill) sees forward progress on long shots. A failed
+        write is logged LOUDLY: the guard is then live and may kill the run."""
+        if self._setup_obj is None:
+            return
+        try:
+            hb = self._setup_obj.output_dir / "heartbeat.txt"
+            hb.parent.mkdir(parents=True, exist_ok=True)
+            hb.write_text(f"{time.time():.0f} {note}\n", encoding="utf-8")
+        except OSError as exc:
+            self._setup_obj.log_fn(
+                f"HEARTBEAT WRITE FAILED ({exc}); L4 dead-man switch is live")
+
+    def _provenance(self) -> Dict[str, Any]:
+        """C-004: everything needed to falsify a board from its manifest."""
+        cfg = self.config
+        steps = int(cfg["steps"])
+        prov: Dict[str, Any] = {
+            "stub": bool(cfg.get("stub", False)),
+            "models": {k: cfg[k] for k in
+                       ("model_high", "model_low", "text_encoder", "vae")},
+            "loras": {k: cfg[k] for k in ("lora_high", "lora_low") if k in cfg},
+            "sampler": {
+                "sampler": str(cfg.get("sampler", "euler")),
+                "scheduler": str(cfg.get("scheduler", "simple")),
+                "steps": steps,
+                "boundary_step": int(cfg.get("boundary_step", max(1, steps // 2))),
+                "cfg": float(cfg["cfg"]),
+                "shift": float(cfg.get("shift", 5.0)),
+                "strength": float(cfg["strength"]),
+                "lora_strength": (float(cfg.get("lora_strength", 1.0))
+                                  if "lora_high" in cfg else None),
+            },
+            "use_reference": bool(cfg.get("use_reference", True)),
+            "determinism": bool(cfg.get("determinism", True)),
+            "shots": {},
+        }
+        for s in self._shots:
+            prov["shots"][s["name"]] = {
+                "prompt": s["prompt"],
+                "negative_prompt": s["negative_prompt"],
+                "seed": int(s["seed"]),
+                "inputs": {key: {"file": s[key],
+                                 "sha256": self._input_sha.get(s[key])}
+                           for key in _shot_input_keys(s)},
+            }
+        return prov
 
     # ------------------------------------------------------------- graph
     def _graph(self, shot: Dict[str, Any]) -> Dict[str, Any]:
@@ -172,6 +299,16 @@ class WanVaceShotTrainer(Trainer):
         if use_ref:
             g["9"] = {"class_type": "LoadImage", "inputs": {
                 "image": Path(shot["reference_image"]).name}}
+        # Optional per-shot mask video: fills VACE channels 16-31 with real
+        # signal (they are constant 0.5 when control_masks is absent). White
+        # (red channel 1.0) = repaint, black = preserve.
+        use_masks = bool(shot.get("control_masks"))
+        if use_masks:
+            g["21"] = {"class_type": "LoadVideo", "inputs": {
+                "file": Path(shot["control_masks"]).name}}
+            g["22"] = {"class_type": "GetVideoComponents", "inputs": {"video": ["21", 0]}}
+            g["23"] = {"class_type": "ImageToMask", "inputs": {
+                "image": ["22", 0], "channel": "red"}}
         hi_model, lo_model = ["1", 0], ["2", 0]
         if use_lora:
             g["3"] = {"class_type": "LoraLoaderModelOnly", "inputs": {
@@ -193,6 +330,8 @@ class WanVaceShotTrainer(Trainer):
             "control_video": ["11", 0]}
         if use_ref:
             vace_inputs["reference_image"] = ["9", 0]
+        if use_masks:
+            vace_inputs["control_masks"] = ["23", 0]
         g["14"] = {"class_type": "WanVaceToVideo", "inputs": vace_inputs}
         g["15"] = {"class_type": "KSamplerAdvanced", "inputs": {
             "model": ["12", 0], "add_noise": "enable", "noise_seed": seed,
@@ -274,6 +413,7 @@ class WanVaceShotTrainer(Trainer):
                     break
             if time.time() > deadline:
                 raise WanShotError(f"shot {shot['name']} exceeded shot_timeout_sec")
+            self._heartbeat(f"render {shot['name']} pid={pid}")  # C-003
             time.sleep(3.0)
 
         # find the saved video
@@ -329,6 +469,7 @@ class WanVaceShotTrainer(Trainer):
             "trainer": "wan_vace_shot",
             "config": {k: v for k, v in self.config.items() if k != "shots"},
             "takes": self._takes,
+            "provenance": self._provenance(),  # C-004
         }, indent=2), encoding="utf-8")
 
     def load_checkpoint(self, path: Path) -> None:
