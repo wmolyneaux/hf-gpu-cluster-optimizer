@@ -161,12 +161,17 @@ class WanVaceShotTrainer(Trainer):
                 "clip": ["5", 0], "text": shot["prompt"]}},
             "8": {"class_type": "CLIPTextEncode", "inputs": {
                 "clip": ["5", 0], "text": shot["negative_prompt"]}},
-            "9": {"class_type": "LoadImage", "inputs": {
-                "image": Path(shot["reference_image"]).name}},
             "10": {"class_type": "LoadVideo", "inputs": {
                 "file": Path(shot["control_video"]).name}},
             "11": {"class_type": "GetVideoComponents", "inputs": {"video": ["10", 0]}},
         }
+        # reference_image is optional: feeding the blockout frame back as the
+        # reference pulls the restyle toward the blockout. Omit it (config
+        # use_reference: false) to give the prompt full stylistic control.
+        use_ref = bool(cfg.get("use_reference", True))
+        if use_ref:
+            g["9"] = {"class_type": "LoadImage", "inputs": {
+                "image": Path(shot["reference_image"]).name}}
         hi_model, lo_model = ["1", 0], ["2", 0]
         if use_lora:
             g["3"] = {"class_type": "LoraLoaderModelOnly", "inputs": {
@@ -180,13 +185,15 @@ class WanVaceShotTrainer(Trainer):
             "model": hi_model, "shift": float(cfg.get("shift", 5.0))}}
         g["13"] = {"class_type": "ModelSamplingSD3", "inputs": {
             "model": lo_model, "shift": float(cfg.get("shift", 5.0))}}
-        g["14"] = {"class_type": "WanVaceToVideo", "inputs": {
+        vace_inputs: Dict[str, Any] = {
             "positive": ["7", 0], "negative": ["8", 0], "vae": ["6", 0],
             "width": int(cfg["width"]), "height": int(cfg["height"]),
             "length": int(cfg["frames"]), "batch_size": 1,
             "strength": float(cfg["strength"]),
-            "control_video": ["11", 0],
-            "reference_image": ["9", 0]}}
+            "control_video": ["11", 0]}
+        if use_ref:
+            vace_inputs["reference_image"] = ["9", 0]
+        g["14"] = {"class_type": "WanVaceToVideo", "inputs": vace_inputs}
         g["15"] = {"class_type": "KSamplerAdvanced", "inputs": {
             "model": ["12", 0], "add_noise": "enable", "noise_seed": seed,
             "steps": steps, "cfg": float(cfg["cfg"]),
