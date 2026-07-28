@@ -46,6 +46,17 @@ def _has(modname: str) -> bool:
 # (registered_type, cfg) -- minimal cfg for a 1-2 epoch CPU run.
 _LOCAL_CASES: List[Tuple[str, Dict[str, Any], List[str]]] = [
     # (type, config, required-modules)
+    ("wan_vace_shot", {
+        "stub": True,  # PORTING.md: never touches real weights or a GPU
+        "shots": [{"name": "smoke_shot", "control_video": "c.mp4",
+                   "reference_image": "r.png", "prompt": "p",
+                   "negative_prompt": "n", "seed": 1}],
+        "epochs": 1, "package_root": ".", "out_prefix": "smoke",
+        "steps": 2, "cfg": 1.0, "strength": 1.0,
+        "width": 64, "height": 64, "frames": 5, "fps": 16,
+        "model_high": "hi", "model_low": "lo",
+        "text_encoder": "te", "vae": "vae",
+    }, []),
     ("torch_module", {
         "module_path": "torch.nn:Linear",
         "module_kwargs": {"in_features": 8, "out_features": 3},

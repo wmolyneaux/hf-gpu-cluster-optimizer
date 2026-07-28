@@ -423,9 +423,30 @@ def check_modal_app_antipatterns(report: PreflightReport, repo_root: Path) -> Ch
             message="modal_app.py not found (covered by CODE-1)",
         ))
     src = app_py.read_text(encoding="utf-8")
+    # Scan CODE only. A comment documenting that an API is absent -- e.g.
+    # "Function.with_options() doesn't exist in this version" -- previously
+    # tripped this check, producing a HALT verdict on a correct file. A gate
+    # that cries wolf gets ignored, which is worse than no gate, so strip
+    # comments and strings before matching. Uses tokenize rather than a regex
+    # so that '#' inside a string literal is not mistaken for a comment.
+    import io
+    import tokenize
+    try:
+        scannable_parts: List[str] = []
+        for tok in tokenize.generate_tokens(io.StringIO(src).readline):
+            if tok.type in (tokenize.COMMENT, tokenize.STRING):
+                # Preserve line structure so MULTILINE anchors still behave.
+                scannable_parts.append("\n" * tok.string.count("\n"))
+            else:
+                scannable_parts.append(tok.string)
+        scannable = "".join(scannable_parts)
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        # Unparseable source is CODE-1's problem, not ours. Fall back to the
+        # raw text so a genuine antipattern is never silently skipped.
+        scannable = src
     hits: List[Dict[str, Any]] = []
     for pattern, msg, why in _MODAL_APP_ANTIPATTERNS:
-        if re.search(pattern, src, re.MULTILINE | re.DOTALL):
+        if re.search(pattern, scannable, re.MULTILINE | re.DOTALL):
             hits.append({"pattern": pattern, "msg": msg, "why": why})
     if hits:
         return report.add(CheckResult(

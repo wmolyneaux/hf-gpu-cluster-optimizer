@@ -74,13 +74,88 @@ _VOLUME_NAME = "modallabs-runs"
 # Hard upper bound on the dry-run cost-preview total. Override via env.
 _DEFAULT_MAX_TOTAL_USD = 25.0
 
+# ---------------------------------------------------------------------------
+# BILL SAFETY. Four independent layers, each of which alone bounds the spend.
+# Ordered outermost (cannot be bypassed) to innermost (cheapest to trip).
+#
+#   L1  _ABSOLUTE_MAX_USD   -- a ceiling on the ceiling. MODALLABS_MAX_USD may
+#                              LOWER the gate but can never raise it past this.
+#                              Not overridable by env, by config, or by flag.
+#   L2  Modal `timeout=`    -- server-side container kill. Enforced by Modal
+#                              even if the container is wedged and ignoring us.
+#                              worst_case_cost == timeout * rate, which is
+#                              exactly what estimate_total_cost_usd() charges.
+#   L3  deadline watchdog   -- in-container, fires _DEADLINE_MARGIN_SEC before
+#                              L2 so checkpoints flush instead of being lost to
+#                              a hard kill.
+#   L4  dead-man switch     -- terminates after _NO_PROGRESS_KILL_SEC with no
+#                              forward progress. THIS IS THE ONE THAT SAVES
+#                              REAL MONEY: without it a hung job silently bills
+#                              the FULL lane (a wedged 4h H100 run is ~$15.80
+#                              instead of the ~$2 it should have cost).
+# ---------------------------------------------------------------------------
+_ABSOLUTE_MAX_USD = 100.0
+_DEADLINE_MARGIN_SEC = 120
+_NO_PROGRESS_KILL_SEC = 600
+# Cold start + image pull + HuggingFace download all happen before the first
+# write, so startup gets its own, larger budget. Too tight and a legitimate
+# cold start is killed; too loose and a job that dies at import burns it.
+_STARTUP_GRACE_SEC = 900
+
+# Timeout lanes. Modal v1.4.2 fixes (gpu, timeout) at decoration time, so one
+# lane == one module-level @app.function. Keep this table SHORT: every lane is
+# additional worst-case billing exposure, and main() always routes a run to the
+# SMALLEST lane that fits its requested max_runtime_sec.
+_REMOTE_GPU = "H100"
+_LANES: Dict[str, int] = {
+    "short":  1800,    # 30 min - Wan 2.2 shots (~1250s measured). Default.
+    "medium": 5400,    # 90 min
+    "long":  14400,    # 4 h    - full FPO training runs (1.5-4h estimated)
+}
+_DEFAULT_LANE = "short"
+
 
 def _max_total_usd() -> float:
-    """Read the cost ceiling from env. Default $25."""
+    """Cost ceiling, clamped to the absolute cap.
+
+    MODALLABS_MAX_USD can only ever LOWER the gate. Attempting to raise it
+    past _ABSOLUTE_MAX_USD is clamped and warned about rather than honoured --
+    a typo in an env var must not be able to authorise an unbounded bill.
+    """
     try:
-        return float(os.environ.get("MODALLABS_MAX_USD", _DEFAULT_MAX_TOTAL_USD))
+        requested = float(os.environ.get("MODALLABS_MAX_USD", _DEFAULT_MAX_TOTAL_USD))
     except (TypeError, ValueError):
         return _DEFAULT_MAX_TOTAL_USD
+    if requested <= 0:
+        return _DEFAULT_MAX_TOTAL_USD
+    if requested > _ABSOLUTE_MAX_USD:
+        print(
+            f"[modallabs] MODALLABS_MAX_USD={requested:.2f} exceeds the hard cap "
+            f"${_ABSOLUTE_MAX_USD:.2f}; CLAMPED to ${_ABSOLUTE_MAX_USD:.2f}. "
+            "Raise _ABSOLUTE_MAX_USD in modal_app.py only with a deliberate "
+            "code change and review.",
+            file=sys.stderr,
+        )
+        return _ABSOLUTE_MAX_USD
+    return requested
+
+
+def _lane_for(timeout_sec: int) -> str:
+    """Smallest lane that fits `timeout_sec`. Raises if none does.
+
+    Routing to the smallest sufficient lane is a cost control: the lane's
+    timeout IS the worst-case bill, so over-provisioning the lane directly
+    over-provisions the maximum spend.
+    """
+    for name, cap in sorted(_LANES.items(), key=lambda kv: kv[1]):
+        if timeout_sec <= cap:
+            return name
+    raise RuntimeError(
+        f"modallabs/modal: max_runtime_sec={timeout_sec} exceeds the largest "
+        f"lane ({max(_LANES.values())}s). Split the job, checkpoint and resume, "
+        "or add a larger lane in modal_app.py -- deliberately, with review, "
+        "because a larger lane raises the worst-case bill for every run in it."
+    )
 
 
 def auto_select_gpu(rc: Dict[str, Any]) -> str:
@@ -124,7 +199,14 @@ def _gpu_for_run(rc: Dict[str, Any]) -> str:
 
 def _max_runtime_sec(rc: Dict[str, Any]) -> int:
     modal_section = rc.get("modal") or {}
-    return int(modal_section.get("max_runtime_sec", _MAX_RUNTIME_SEC_DEFAULT))
+    explicit = modal_section.get("max_runtime_sec")
+    if explicit is None:
+        # Defaulting to 4h was safe when a non-matching timeout was REFUSED before
+        # .spawn(). Now it ROUTES, so the default silently buys the most expensive
+        # lane ($22.00 worst case on H100) for a config that just forgot a line.
+        # Default to the SMALLEST lane; a longer run must ask for it in writing.
+        return _LANES[_DEFAULT_LANE]
+    return int(explicit)
 
 
 def _expected_runtime_sec(rc: Dict[str, Any]) -> int:
@@ -323,35 +405,164 @@ if _HAS_MODAL:
     #
     # The container is torn down at function exit -- no idle keep-alive.
     # We deliberately do NOT pass keep_warm or min_containers.
-    _REMOTE_GPU = "H100"
-    _REMOTE_TIMEOUT_SEC = 1800
-    @app.function(
-        gpu=_REMOTE_GPU,
-        timeout=_REMOTE_TIMEOUT_SEC,
-        volumes={
-            "/runs": runs_volume,
-            _HF_CACHE_MOUNT: hf_cache_volume,
-        },
-    )
-    def _remote(run_cfg: dict, run_id: str, resume: bool) -> dict:
-        """Single per-run training entrypoint. Fixed gpu/timeout
-        (Modal v1.4.2 cannot override at call site).
+    _REMOTE_TIMEOUT_SEC = _LANES[_DEFAULT_LANE]  # back-compat alias
 
-        Mounts the persistent `modallabs-hf-cache` volume at `/hf_cache`
-        so HuggingFace downloads survive container teardown across runs.
-        The image's HF_HOME / TRANSFORMERS_CACHE / HUGGINGFACE_HUB_CACHE
-        / HF_DATASETS_CACHE env vars all point at that mount, so the
-        first cold start populates the cache and every subsequent cold
-        start reuses it."""
+    def _remote_body(run_cfg: dict, run_id: str, resume: bool,
+                     lane_timeout_sec: int) -> dict:
+        """Shared body for every lane. Arms L3 (deadline) and L4 (dead-man)
+        before handing off to the trainer.
+
+        Mounts the persistent `modallabs-hf-cache` volume at `/hf_cache` so
+        HuggingFace downloads survive container teardown across runs.
+        """
+        import threading
         from modallabs.runner import train_one
         import modallabs.models  # noqa: F401  -- register trainers
-        return train_one(
-            run_cfg,
-            run_id=run_id,
-            output_root=Path("/runs"),
-            resume=resume,
-            force_cpu=False,
+
+        started = time.monotonic()
+        deadline = started + max(1, lane_timeout_sec - _DEADLINE_MARGIN_SEC)
+        run_dir = Path("/runs") / run_id
+        stop = threading.Event()
+
+        def _newest_mtime() -> float:
+            """Most recent write anywhere under the run dir, or -1 if none.
+
+            Deliberately filesystem-based rather than callback-based:
+            `train_one` takes no progress hook, and requiring one would make
+            this guard depend on trainer cooperation. Every trainer writes
+            checkpoints and logs, so mtime is the one progress signal that is
+            true for all of them and cannot be forgotten by a new trainer.
+            """
+            newest = -1.0
+            try:
+                for p in run_dir.rglob("*"):
+                    try:
+                        if p.is_file():
+                            newest = max(newest, p.stat().st_mtime)
+                    except OSError:
+                        continue
+            except OSError:
+                return newest
+            return newest
+
+        def _watch() -> None:
+            # L3 + L4. os._exit is deliberate: a wedged trainer may be stuck in
+            # a C extension where an exception can never be delivered, and the
+            # entire point of this thread is that it works ANYWAY. The container
+            # dies, Modal stops billing, and the run resumes from its last
+            # checkpoint.
+            last_seen = -1.0
+            last_change = time.monotonic()
+            while not stop.wait(15.0):
+                now = time.monotonic()
+                if now >= deadline:
+                    print(f"[modallabs] L3 deadline watchdog: {lane_timeout_sec}s lane "
+                          f"nearly exhausted; terminating to stop billing.", file=sys.stderr)
+                    sys.stderr.flush()
+                    os._exit(75)
+                m = _newest_mtime()
+                if m > last_seen:
+                    last_seen, last_change = m, now
+                    continue
+                idle = now - last_change
+                # Cold start, image pull and HF download all precede the first
+                # write, so the startup budget is separate and larger.
+                limit = (_STARTUP_GRACE_SEC if last_seen < 0 else _NO_PROGRESS_KILL_SEC)
+                if idle >= limit:
+                    what = "no output written since container start" if last_seen < 0 \
+                        else f"no write under {run_dir} for {idle:.0f}s"
+                    print(f"[modallabs] L4 dead-man switch: {what} (limit {limit}s); "
+                          f"terminating to stop billing.", file=sys.stderr)
+                    sys.stderr.flush()
+                    os._exit(76)
+
+        watcher = threading.Thread(target=_watch, name="modallabs-billguard", daemon=True)
+        watcher.start()
+        print(f"[modallabs] bill guard armed: lane={lane_timeout_sec}s, "
+              f"L3 deadline at {lane_timeout_sec - _DEADLINE_MARGIN_SEC}s, "
+              f"L4 idle limit {_NO_PROGRESS_KILL_SEC}s "
+              f"(startup grace {_STARTUP_GRACE_SEC}s)", file=sys.stderr)
+        try:
+            return train_one(
+                run_cfg,
+                run_id=run_id,
+                output_root=Path("/runs"),
+                resume=resume,
+                force_cpu=False,
+            )
+        finally:
+            stop.set()
+
+    _COMMON = dict(
+        gpu=_REMOTE_GPU,
+        volumes={"/runs": runs_volume, _HF_CACHE_MOUNT: hf_cache_volume},
+    )
+
+    @app.function(timeout=_LANES["short"], **_COMMON)
+    def _remote(run_cfg: dict, run_id: str, resume: bool) -> dict:
+        """Default lane, 30 min. Name kept as `_remote` for back-compat."""
+        return _remote_body(run_cfg, run_id, resume, _LANES["short"])
+
+    @app.function(timeout=_LANES["medium"], **_COMMON)
+    def _remote_medium(run_cfg: dict, run_id: str, resume: bool) -> dict:
+        """90 min lane."""
+        return _remote_body(run_cfg, run_id, resume, _LANES["medium"])
+
+    @app.function(timeout=_LANES["long"], **_COMMON)
+    def _remote_long(run_cfg: dict, run_id: str, resume: bool) -> dict:
+        """4 h lane. Worst case ~$15.80/run on H100 -- route here only when
+        the job genuinely needs it."""
+        return _remote_body(run_cfg, run_id, resume, _LANES["long"])
+
+    _LANE_FNS = {"short": _remote, "medium": _remote_medium, "long": _remote_long}
+
+    # ------------------------------------------------------------- Wan lane
+    # Separate image from `modal_image`: the training image has no video stack,
+    # and adding one would slow the cold start of all existing trainers.
+    # ComfyUI route (RENDER_CONTRACT M-5 option 2, the one M-6 is written
+    # against): core nodes only (WanVaceToVideo, LoraLoaderModelOnly, LoadVideo,
+    # CreateVideo/SaveVideo are all core as of v0.28.x). Linux torch wheels on
+    # PyPI bundle CUDA, so ComfyUI's own requirements pull a CUDA torch.
+    wan_image = (
+        modal.Image.debian_slim(python_version="3.11")
+        .apt_install("git", "ffmpeg")
+        .run_commands(
+            # Pinned to the EXACT commit of the locally verified install — every
+            # node schema the wan_vace_shot trainer emits was read from this
+            # commit's comfy_extras sources (WanVaceToVideo, LoadVideo,
+            # GetVideoComponents, CreateVideo, SaveVideo, TrimVideoLatent).
+            "git init /comfyui && cd /comfyui && "
+            "git remote add origin https://github.com/comfyanonymous/ComfyUI.git && "
+            "git fetch --depth 1 origin b08debceca73bd3732b731c571bd0b4710281310 && "
+            "git checkout FETCH_HEAD",
+            "pip install -r /comfyui/requirements.txt",
         )
+        .env({
+            "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,max_split_size_mb:128",
+            "HF_HOME": _HF_CACHE_MOUNT,
+        })
+        .add_local_python_source("modallabs")
+    )
+    # create_if_missing=False ON PURPOSE: a typo in the volume name must fail at
+    # launch, not mount an empty volume discovered 34.6 GiB short on a hot GPU.
+    wan_weights_volume = modal.Volume.from_name("swarmcrp-wan-weights", create_if_missing=False)
+
+    _WAN_COMMON = dict(
+        image=wan_image,
+        gpu=_REMOTE_GPU,
+        volumes={"/runs": runs_volume, _HF_CACHE_MOUNT: hf_cache_volume,
+                 "/wan_models": wan_weights_volume},
+    )
+
+    @app.function(timeout=_LANES["medium"], **_WAN_COMMON)
+    def _remote_wan(run_cfg: dict, run_id: str, resume: bool) -> dict:
+        """Wan 2.2 VACE shot-batch lane. One epoch is one shot; weights load once."""
+        return _remote_body(run_cfg, run_id, resume, _LANES["medium"])
+
+    # Routed on the run's own type, not on its timeout: the Wan lane differs by
+    # IMAGE and by VOLUME, which _lane_for cannot see. A single explicit key,
+    # never a heuristic.
+    _TYPE_LANE_FNS = {"wan_vace_shot": _remote_wan}
 
     @app.local_entrypoint()
     def main(
@@ -413,28 +624,65 @@ if _HAS_MODAL:
         # If you need a mixed-(gpu, timeout) sweep, add a second
         # @app.function with the other tuple and dispatch on the values
         # here. (Modal v1.4+ has no per-call override API for fan-out.)
-        mismatches = []
+        # GPU still must match: every lane is pinned to _REMOTE_GPU, so a run
+        # asking for different silicon has nowhere to go. The TIMEOUT no longer
+        # has to match -- it selects a lane instead.
+        gpu_mismatches = []
+        routing = []
         for rc in runs:
             gpu = _gpu_for_run(rc)
-            timeout_sec = _max_runtime_sec(rc)
-            if gpu != _REMOTE_GPU or timeout_sec != _REMOTE_TIMEOUT_SEC:
-                mismatches.append({
-                    "name": rc.get("name"),
-                    "requested": {"gpu": gpu, "timeout_sec": timeout_sec},
-                })
-        if mismatches:
+            if gpu != _REMOTE_GPU:
+                gpu_mismatches.append({"name": rc.get("name"), "requested_gpu": gpu})
+                continue
+            lane = _lane_for(_max_runtime_sec(rc))  # raises if no lane fits
+            fn = _TYPE_LANE_FNS.get(str(rc.get("type") or ""))
+            if fn is not None and _max_runtime_sec(rc) > _LANES["medium"]:
+                raise RuntimeError(
+                    f"modallabs/modal: {rc.get('name')!r} is a Wan run asking for "
+                    f"{_max_runtime_sec(rc)}s; the Wan image is only declared on the "
+                    f"medium lane ({_LANES['medium']}s). Declare a long Wan variant "
+                    "deliberately -- it is 4h of H100 worst case per container."
+                )
+            routing.append((rc, lane, fn))
+        if gpu_mismatches:
             raise RuntimeError(
-                "modallabs/modal: mixed-resource sweep not supported in "
-                f"Modal v1.4.2 (one @app.function = one (gpu, timeout); "
-                f"the module-level _remote is configured for "
-                f"({_REMOTE_GPU}, {_REMOTE_TIMEOUT_SEC}s) but {len(mismatches)} "
-                f"run(s) request a different tuple: {mismatches}. "
-                "Fix: homogenize the config OR add additional module-level "
-                "@app.function variants in modal_app.py and route in this loop."
+                "modallabs/modal: every lane is pinned to "
+                f"{_REMOTE_GPU}; {len(gpu_mismatches)} run(s) request different "
+                f"silicon: {gpu_mismatches}. Fix: homogenize cfg.modal.gpu, OR add "
+                "module-level @app.function variants for the other GPU and extend "
+                "_LANE_FNS. Note each new (gpu, timeout) pair is additional "
+                "worst-case billing exposure."
             )
+
+        # Re-assert the ceiling immediately before spend. The dry-run gate ran
+        # against the config; this catches a config mutated in between, and it
+        # is the last point at which nothing has been billed yet.
+        # Price what will ACTUALLY launch. `cfg` still holds the runs that
+        # --resume filtered out; charging for them here gates a 1-run resume on
+        # the whole board's worst case.
+        _total_now, _ = estimate_total_cost_usd(cfg_after_resume)
+        _cap_now = _max_total_usd()
+        if _total_now > _cap_now:
+            raise RuntimeError(
+                f"modallabs/modal: worst-case ${_total_now:.2f} exceeds the ceiling "
+                f"${_cap_now:.2f} (absolute cap ${_ABSOLUTE_MAX_USD:.2f}). Refusing to "
+                "launch. Lower max_runtime_sec, reduce the run count, or raise "
+                "MODALLABS_MAX_USD deliberately -- it cannot exceed the absolute cap."
+            )
+
+        by_lane: Dict[str, int] = {}
+        for _rc, lane, _fn in routing:
+            by_lane[lane] = by_lane.get(lane, 0) + 1
+        print(f"[modallabs] lane routing: {by_lane} "
+              f"(worst case ${_total_now:.2f} vs ceiling ${_cap_now:.2f}; "
+              f"L4 dead-man switch at {_NO_PROGRESS_KILL_SEC}s idle)")
+
         futures = []
-        for rc in runs:
-            futures.append((rc.get("name"), _remote.spawn(rc, run_id, resume)))
+        for rc, lane, fn in routing:
+            # An explicit per-type function wins over the lane's default; `fn` is
+            # None for every run that is not a Wan run, so nothing else changes.
+            target = fn if fn is not None else _LANE_FNS[lane]
+            futures.append((rc.get("name"), target.spawn(rc, run_id, resume)))
 
         results = []
         try:

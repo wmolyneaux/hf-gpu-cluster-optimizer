@@ -28,6 +28,7 @@ _safe_import("modallabs.models.transformer")
 _safe_import("modallabs.models.manifold")
 _safe_import("modallabs.models.ntm")
 _safe_import("modallabs.models.q_learning")
+_safe_import("modallabs.models.wan_vace_shot")
 _safe_import("modallabs.models.diffusion")
 
 # Optional ML libs
