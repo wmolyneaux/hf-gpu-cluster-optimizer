@@ -1,0 +1,80 @@
+# HERO 34s FINAL -- one continuous take, 850 f @ 25 fps.
+#   orbit  0- 56   2.2 s  270 deg lead-dolly, she is LED not followed
+#   hold  56-250   7.8 s  moonwalk celebration FEATURED (slow 40 deg drift, r 3.0->4.2)
+#   fly  250-850  24.0 s  216 m at 9.00 m/s -- 2.6x slower than the first cut -- on a
+#                         quadratic Bezier over the canopy, ending 26 m from the
+#                         C.V. Starr East Asian Library at 11 m (treetop, not aerial),
+#                         framing Campanile (-37.6 deg) and Doe (-70.3 deg), 32.6 apart.
+# char_key 0.7 = fraction of the sun. A10G: 12.6% cheaper AND 58% faster than L4.
+run_id: bounce34g_A10G_r1
+_c: &c
+  retarget: shots/retarget_bounce34s.json
+  frames: 850
+  res: 1024x576
+  samples: 8
+  look: magical
+  npr: cel
+  npr_mix: 0.65
+  outline: "off"
+  flower_extent: "182.79348764025738"
+  camera: bcHeroGladeCam
+  char_key: 0.7
+  guide_passes: true
+  allow_fused: "RENDERED take, not restyled: the Cycles path never reads style.json."
+runs:
+  - name: c00
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1800, est_sec_per_epoch: 460}
+    config:
+      <<: *c
+      frame_start: 0
+      frame_end: 107
+  - name: c01
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1800, est_sec_per_epoch: 460}
+    config:
+      <<: *c
+      frame_start: 107
+      frame_end: 213
+  - name: c02
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1800, est_sec_per_epoch: 460}
+    config:
+      <<: *c
+      frame_start: 213
+      frame_end: 320
+  - name: c03
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1800, est_sec_per_epoch: 460}
+    config:
+      <<: *c
+      frame_start: 320
+      frame_end: 426
+  - name: c04
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1800, est_sec_per_epoch: 460}
+    config:
+      <<: *c
+      frame_start: 426
+      frame_end: 532
+  - name: c05
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1800, est_sec_per_epoch: 460}
+    config:
+      <<: *c
+      frame_start: 532
+      frame_end: 638
+  - name: c06
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1800, est_sec_per_epoch: 460}
+    config:
+      <<: *c
+      frame_start: 638
+      frame_end: 744
+  - name: c07
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1800, est_sec_per_epoch: 460}
+    config:
+      <<: *c
+      frame_start: 744
+      frame_end: 850

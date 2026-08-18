@@ -1,0 +1,53 @@
+# OSKI MOONWALK take -- 121 frames, 1536x768, 96 spp, 4 concurrent A10G chunks.
+#
+# This take gates the noise-warping experiment: it carries the Vector pass that
+# warped_noise_build.py advects the sampling noise along, plus the depth/normal/seg
+# guides the restyle_geo arms condition on.
+#
+# CARD: A10G, on the MEASURED economics in heroshot_bounce270_fleet8_a10g.yaml --
+#   A10G 3.351 s/f x $0.000306 = $0.001025/f   <- cheapest AND fastest
+#   H100 3.622 s/f x $0.001097 = $0.003973/f   <- wrong for Cycles on all counts
+# A10G also ships the sm_86 cubin, so there is no PTX->SASS JIT stall on first render.
+#
+# RATE FOR THIS RES, derived not assumed: the measured 3.351 s/f is at 1024x576. This
+# shot is 1536x768 = 2.25x the pixels, and the same change scaled the local M5 take by
+# 2.80x (4.46 -> 12.5 s/f measured this session). Using 3.0x for headroom => ~10.05 s/f.
+#   4 chunks x (70.3 s startup + 31 f x 10.05) = 1528 GPU-s x $0.000306 = $0.47
+#
+# LOOK IS EXPLICIT: heroshot_take refuses an unset `look` because a silent `plain` has
+# already cost two renders.
+run_id: oski_segB_take_r1
+
+_moon: &moon
+  retarget: shots/segB.json
+  frames: 121
+  res: 1536x768
+  samples: 96
+  look: magical
+  npr: cel
+  npr_mix: 0.65
+  outline: "off"
+  char_key: 0.20
+  camera: bcHeroGladeCam
+  guide_passes: true
+  glb: rig/oski/rigged.glb
+  style_card: characters/oski/style.json
+  allow_fused: "moonwalk proof: RENDERED take, fused asset stated"
+
+runs:
+  - name: m00
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1000, est_sec_per_epoch: 400}
+    config: {<<: *moon, frame_start: 0,  frame_end: 31}
+  - name: m01
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1000, est_sec_per_epoch: 400}
+    config: {<<: *moon, frame_start: 31, frame_end: 61}
+  - name: m02
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1000, est_sec_per_epoch: 400}
+    config: {<<: *moon, frame_start: 61, frame_end: 91}
+  - name: m03
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1000, est_sec_per_epoch: 400}
+    config: {<<: *moon, frame_start: 91, frame_end: 121}

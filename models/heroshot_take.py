@@ -321,6 +321,15 @@ class HeroshotTakeTrainer(Trainer):
             "--resume",
             "--outdir", str(outdir),
         ]
+        # STYLE CARD passthrough. place_rig.py:138 defaults --style-card to
+        # ~/golden-rig/library/characters/hero_0454/style.json, which exists on the M5
+        # and NOWHERE on a worker -- so any character other than hero_0454 either
+        # crashed at the json.load or, worse, would have rendered against HER card.
+        # Same failure class the char_key note below describes: a pixel-affecting input
+        # the config can set and the lane silently drops. Resolved against the volume
+        # root like every other path here.
+        if str(cfg.get("style_card") or "").strip():
+            argv += ["--style-card", str(root / str(cfg["style_card"]).strip())]
         # CHARACTER KEY passthrough (2026-08-12). Added because the flag existed in
         # place_rig, was in the shot config, and was SILENTLY DROPPED here -- the lane
         # simply had no reference to it, so every render came back with her at 18.76

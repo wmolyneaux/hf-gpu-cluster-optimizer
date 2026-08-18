@@ -1,0 +1,55 @@
+# OSKI CAMPUS TOUR -- three gated crane takes, 121 frames each, 1536x768, 96 spp.
+#
+# Glade / Doe / Campanile. Each is a HOLD then a capped crane, authored by
+# shots/oskiTour/author_crane.py and gated by tools/heroshot/shot_gate.py so the subject
+# never falls below the latent Nyquist (2 latent sites per axis = 1.389% of frame at this
+# resolution). The solver picked each stop's ending distance and lens against two
+# constraints at once -- subject >= 1.5x Nyquist AND >= 95% of the landmark in frame:
+#     glade      4.6 -> 11 m / 39 mm   subject 2.11%   Campanile 97%
+#     doe        4.6 -> 16 m / 56 mm   subject 2.10%   Doe       95%
+#     campanile  4.6 -> 15 m / 53 mm   subject 2.09%   Campanile 95%
+#
+# WHY THESE ARE RE-RENDERED ON A10G rather than reusing the local Metal takes:
+# RESOLVED_DEVICE is a place_rig digest input (place_rig.py:365-380), so a CUDA/OptiX take
+# and a Metal take are byte-different by construction and must not be spliced into one
+# sequence. Two of the three already exist from a local run; mixing them would put two
+# renderers in one cut.
+#
+# 12 chunks total (3 shots x 4). Same measured A10G basis as the moonwalk config:
+# ~10.05 s/f at this resolution, 70.3 s startup per chunk.
+#   12 x (70.3 + 31 x 10.05) = 4585 GPU-s x $0.000306 = $1.40 expected
+run_id: oski_crane_tour_A10G_r1
+
+_tour: &tour
+  frames: 121
+  res: 1536x768
+  samples: 96
+  look: magical
+  npr: cel
+  npr_mix: 0.65
+  outline: "off"
+  char_key: 0.20
+  camera: bcHeroGladeCam
+  guide_passes: true
+  glb: rig/oski/rigged.glb
+  style_card: characters/oski/style.json
+  allow_fused: "campus tour: RENDERED take, fused asset stated"
+
+_modal: &modal_a10g
+  gpu: A10G
+  max_runtime_sec: 1000
+  est_sec_per_epoch: 400
+
+runs:
+  - {name: g00, type: heroshot_take, modal: *modal_a10g, config: {<<: *tour, retarget: shots/crane_glade.json, frame_start: 0,  frame_end: 31}}
+  - {name: g01, type: heroshot_take, modal: *modal_a10g, config: {<<: *tour, retarget: shots/crane_glade.json, frame_start: 31, frame_end: 61}}
+  - {name: g02, type: heroshot_take, modal: *modal_a10g, config: {<<: *tour, retarget: shots/crane_glade.json, frame_start: 61, frame_end: 91}}
+  - {name: g03, type: heroshot_take, modal: *modal_a10g, config: {<<: *tour, retarget: shots/crane_glade.json, frame_start: 91, frame_end: 121}}
+  - {name: d00, type: heroshot_take, modal: *modal_a10g, config: {<<: *tour, retarget: shots/crane_doe.json, frame_start: 0,  frame_end: 31}}
+  - {name: d01, type: heroshot_take, modal: *modal_a10g, config: {<<: *tour, retarget: shots/crane_doe.json, frame_start: 31, frame_end: 61}}
+  - {name: d02, type: heroshot_take, modal: *modal_a10g, config: {<<: *tour, retarget: shots/crane_doe.json, frame_start: 61, frame_end: 91}}
+  - {name: d03, type: heroshot_take, modal: *modal_a10g, config: {<<: *tour, retarget: shots/crane_doe.json, frame_start: 91, frame_end: 121}}
+  - {name: c00, type: heroshot_take, modal: *modal_a10g, config: {<<: *tour, retarget: shots/crane_campanile.json, frame_start: 0,  frame_end: 31}}
+  - {name: c01, type: heroshot_take, modal: *modal_a10g, config: {<<: *tour, retarget: shots/crane_campanile.json, frame_start: 31, frame_end: 61}}
+  - {name: c02, type: heroshot_take, modal: *modal_a10g, config: {<<: *tour, retarget: shots/crane_campanile.json, frame_start: 61, frame_end: 91}}
+  - {name: c03, type: heroshot_take, modal: *modal_a10g, config: {<<: *tour, retarget: shots/crane_campanile.json, frame_start: 91, frame_end: 121}}
