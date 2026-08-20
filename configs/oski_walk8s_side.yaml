@@ -1,0 +1,72 @@
+# OSKI WALK8S -- SIDE TRACKING take. 201 frames, 1536x768, 96 spp, 4 concurrent A10G chunks.
+#
+# THE THIRD CAMERA ON ONE PIECE OF MOTION. walk8s.json (az 28->42, trailing) and
+# walk8s_front.json (az 208->222, leading) are byte-identical in all 33 fields except
+# follow_cam; walk8s_side.json is the same again. That is what makes the set a controlled
+# experiment rather than three separate shots.
+#
+# WHY THIS CAMERA IS WHAT IT IS -- every number derived, none chosen:
+#   az   -62.0  travel-relative (C1: 0 = trailing, 180 = leading). The Campanile sits
+#               26.8 -> 30.7 deg off the travel axis over the shot, so a PURE 90 deg side
+#               camera puts it 59.1 deg off the view axis -- outside the frame at every lens
+#               down to 14 mm. The most lateral angle that still holds it is -71.7; -62 keeps
+#               ~16 deg of horizontal margin so drift cannot lose the tower.
+#   lens 16.0   The tower top subtends 27.41 deg at 180.3 m (CAMPANILE_H 93.5,
+#               solve_cams.py:85). 18 mm gives 26.57 deg of vertical half-FOV and CUTS THE
+#               TOP OFF. Widest lens that holds it is 17.36 mm. solve_cams.py:713-714 already
+#               asserts this exact pair of inequalities for the shipped wide camera.
+#   r     8.0   Constant. A tracking shot holds its distance; the shipped orbit ramps
+#               3.6 -> 9.0 because it is a pull-back, which is a different shot.
+#   h/aim 1.35  LEVEL axis. Pitching down costs the vertical headroom the tower needs: at
+#               aim_h 0.85 the axis pitches -3.58 deg and the tower top lands 30.99 deg off
+#               it, outside 29.36. Level holds it at 27.41. h 1.35 matches the solved wide cam.
+#
+# FRAMING THAT RESULTS: subject 137 px = 2.1 latent sites (floor is 64 px, PX_PER_SITE,
+# cond_lod.py:93-95); tower ~400 px tall at its true surveyed 180.3 m; face_visibility 0.2653,
+# i.e. three-quarter back -- the side of his face is visible, so the prompt must NOT be given
+# the pure back-of-head token set. build_prompts derives that from this file's own az.
+#
+# ECONOMICS: identical to oski_walk8s_take.yaml, whose measured cost was $0.4614 for the same
+# 201 frames at the same res and spp. A10G is both cheapest and fastest for Cycles here
+# (A10G 3.351 s/f x $0.000306 vs H100 3.622 s/f x $0.001097) and ships the sm_86 cubin, so
+# there is no PTX->SASS JIT stall on first render.
+#
+# LANDMINE: walk8s_side.json MUST be inside busd_take.tar on the volume, not merely loose on
+# the FUSE mount -- _resolve_root prefers the tar and only falls back if the tar is absent.
+# APPEND to the tar; do NOT re-run stage_berkeley_take.sh, which rebuilds it around a single
+# shot and would drop walk8s.json.
+run_id: oski_walk8s_side_r2
+
+_side: &side
+  retarget: shots/walk8s_side.json
+  frames: 201
+  res: 1536x768
+  samples: 96
+  look: magical
+  npr: cel
+  npr_mix: 0.65
+  outline: "off"
+  char_key: 0.20
+  camera: bcHeroGladeCam
+  guide_passes: true
+  glb: rig/oski/rigged.glb
+  style_card: characters/oski/style.json
+  allow_fused: "moonwalk proof: RENDERED take, fused asset stated"
+
+runs:
+  - name: s00
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1000, est_sec_per_epoch: 400}
+    config: {<<: *side, frame_start: 0,  frame_end: 51}
+  - name: s01
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1000, est_sec_per_epoch: 400}
+    config: {<<: *side, frame_start: 51, frame_end: 101}
+  - name: s02
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1000, est_sec_per_epoch: 400}
+    config: {<<: *side, frame_start: 101, frame_end: 151}
+  - name: s03
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1000, est_sec_per_epoch: 400}
+    config: {<<: *side, frame_start: 151, frame_end: 201}
