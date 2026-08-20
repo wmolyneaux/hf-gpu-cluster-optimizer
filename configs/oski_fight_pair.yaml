@@ -1,0 +1,328 @@
+# OSKI FIGHT -- the TWO-RIG pair take. 201 frames, 1536x768, 96 spp, two solved cameras,
+# 4 concurrent A10G chunks each. This is the first config in the tree that asks
+# place_rig.py for a SECOND character (WP5).
+#
+# ============================================================================
+# READ THIS FIRST: THIS CONFIG CANNOT RENDER TWO CHARACTERS YET.
+# ============================================================================
+# models/heroshot_take.py has NO passthrough for --glb-b / --retarget-b / --style-card-b.
+# It enumerates every place_rig flag it forwards by hand (heroshot_take.py:314-381) and
+# those three are simply absent, so `glb_b:` below is read by nobody and the take would
+# render ONE character with every gate green -- exactly the failure class that file's own
+# comments record twice already (char_key at :333-345, guide_passes at :346-354).
+#
+# FALSIFIED, not assumed, at $0 on 2026-08-19: the trainer was built from this config with
+# subprocess.Popen intercepted, and the argv it would exec was captured verbatim:
+#
+#   ... --look magical --stage /BUSD/usd/shots/shotHeroGlade.usda --glb /BUSD/rig/oski/rigged.glb
+#       --resume --outdir ... --style-card /BUSD/characters/oski/style.json --char-key 0.2
+#       --guide-passes --allow-fused ... --npr cel --npr-mix 0.65 --outline off
+#       --camera bcHeroGladeCam
+#
+#     --char-key      in argv: True     <- POSITIVE CONTROL: the harness works
+#     --glb-b         in argv: False
+#     --retarget-b    in argv: False
+#     --style-card-b  in argv: False
+#
+# C6 is what makes this dangerous rather than merely broken: place_rig's second rig is
+# ADDITIVE and --glb-b is the only trigger, so a one-rig run is byte-identical -- same
+# digest inputs, same cov_ filename, same pass_index 7. A dropped flag therefore does not
+# error. It prices, stages, renders and reports green, one fighter short.
+#
+# THE EDIT THAT UNBLOCKS IT (models/heroshot_take.py, NOT owned by this lane, so it is
+# written here rather than made). Beside the char_key loop at heroshot_take.py:340:
+#
+#     for _k, _flag in (("glb_b", "--glb-b"),
+#                       ("retarget_b", "--retarget-b"),
+#                       ("style_card_b", "--style-card-b")):
+#         if str(cfg.get(_k) or "").strip():
+#             argv += [_flag, str(root / str(cfg[_k]).strip())]     # volume-root relative
+#
+# and beside the setup() staging asserts at heroshot_take.py:280-288, so a missing second
+# rig fails at minute 0 instead of after the container is warm:
+#
+#     for _k in ("glb_b", "retarget_b", "style_card_b"):
+#         if str(cfg.get(_k) or "").strip():
+#             needed.append(root / str(cfg[_k]).strip())
+#
+# UNTIL THAT LANDS, LAUNCHING THIS FILE BUYS A ONE-CHARACTER RENDER AT TWO-CHARACTER
+# PRICE. The keys are written here anyway, in the names the patch above reads, so the
+# config is the fixed half of the contract and the diff is one hunk.
+#
+# ============================================================================
+# WHAT THE SECOND RIG IS, AND WHY THESE THREE KEYS AND NOT TWO
+# ============================================================================
+#   glb_b        rig/oski/rigged.glb -- THE SAME ASSET AS A. Only one rig exists
+#                (~/3dmotions/out/oski_walkfix/rigged.glb); the pair is two performances
+#                of one character, not two characters. place_rig.py:174 is explicit that
+#                a second rig sharing A's ANIMATION would be a mirror, which is why the
+#                distinct thing is the retarget, not the glb.
+#   retarget_b   shots/fight_B.json -- B's own motion, own stature, own path. REQUIRED
+#                with glb_b rather than defaulted (place_rig.py:184-186 raises if exactly
+#                one of the two is given).
+#   style_card_b MANDATORY HERE, and this is a derived requirement, not tidiness.
+#                place_rig.py:182-183 defaults the B card to a SIBLING of --glb-b, i.e.
+#                rig/oski/style.json -- which is not on the volume: the card is staged at
+#                /characters/oski/style.json (stage_oski_take.sh:41). _asset_identity
+#                swallows an unreadable card (place_rig.py:290-293), so the failure is
+#                silent, and _repair_character_material then reads `surface` from it:
+#                oski's card says surface "fur" -> Subsurface 0.10 / Roughness 0.75,
+#                a NULL card -> 0.00 / 0.65. Unset, the two fighters ship with different
+#                subsurface budgets and it reads as a look decision.
+#
+# THREE THINGS THE PAIR CANNOT CARRY, all refusals in place_rig, all deliberate:
+#   char_key   REMOVED from this config. The walk8s takes all carry char_key: 0.20;
+#              place_rig.py:205-210 REFUSES --char-key with --glb-b, because the key ring
+#              is parented to ONE armature and light-linked to ONE mesh, so it would light
+#              A and leave B to the sun. This is therefore a real photometric difference
+#              between this take and the walk8s set -- stated, not silently inherited.
+#   prop       place_rig.py:199-204 refuses --prop with --glb-b (the ride fit is solved
+#              for one rider). Not requested here; noted so nobody adds it.
+#   allow_fused rigged.glb is a single-mesh FUSED asset, so the gate fires TWICE now --
+#              once per character -- and writes ALLOW_FUSED_B.txt beside the frames
+#              (place_rig.py:397-405). The reason below is stated for the pair.
+#
+# ============================================================================
+# CAMERAS -- SOLVED UPSTREAM, CITED HERE, NOT RE-DERIVED
+# ============================================================================
+# Both live in ~/Desktop/berkeley-usd/shots/oskiFight/cams.json and are already baked into
+# the two retargets' follow_cam blocks (verified: both carry az_frame "travel" at the
+# sequence AND phase level, which is what build_prompts requires -- C7).
+#
+#   wide      lens 18.0  r 4.0  h 1.35   az -26.788479  aim_h 0.88011  subject_px 307.2
+#             far_top 26.37 deg vs half_vfov 26.57 deg -- the Campanile top is IN, with
+#             0.20 deg to spare, at its surveyed 188.6 m.
+#   birdseye  lens 40.0  r 4.5  h 4.576  az   0.0       aim_h 0.8001  subject_px 606.9
+#             THIS IS THE CAMERA THAT MAKES A PUNCH LEGIBLE, and legibility is derived:
+#             a punch is an arm-length excursion (arm_m 0.3596) and must exceed one latent
+#             site or the encoder cannot represent it. Here it is 136.4 px = 2.13 sites
+#             (px_per_site 64, cams.json constants). look_down 40.0 deg.
+#
+# BOTH CAMERAS ARE RENDERED IN ONE CONFIG ON PURPOSE. Two views of one performance is the
+# same controlled-set logic as walk8s / walk8s_front / walk8s_side: the retargets are
+# identical in every field except follow_cam, so a difference downstream is the camera and
+# nothing else. It is also what a view-specific channel proof needs -- trkW vs trkB must
+# bind with DIFFERENT latent_slice_digests, the way trkB/trkS did on oskiTwoCam.
+#
+# SEPARATION, and why it clears the ceiling: cams.json separation_m 1.6002, which is
+# exactly stature_m 1.6002 -- one body height, i.e. C2's brawl envelope merge point, not a
+# number anybody picked for framing. The lens-invariant pair ceiling is 7.4 m framed at
+# u 0.2/0.8 and 12.4 m absolute (place_rig.py:220-221). 1.6002 / 7.4 = 0.216 of the framed
+# ceiling, so the pair has 4.6x of slack and neither the WARNING at place_rig.py:2190 nor
+# the SystemExit at :2182 can fire. NOTE the C1 trap while reading any probe of this: at
+# 1024x576 the same derivation reads 8.3 m instead of 12.4. The gate above is METRIC and
+# says the same thing at 256x144 as at 1536x768, which is why it is the one to trust.
+#
+# ============================================================================
+# ECONOMICS -- MEASURED, then BOUNDED. Every number below is derived here.
+# ============================================================================
+# A10G is $1.10/h (modal_app.py:66) = $0.000305556 / GPU-s, and is both cheapest and
+# fastest for Cycles here (A10G 3.351 s/f x $0.000306 vs H100 3.622 s/f x $0.001097); it
+# ships the sm_86 cubin so there is no PTX->SASS JIT stall on the first render.
+#
+# TWO MEASURED SINGLE-RIG TAKES, same 201 frames, same res, same spp, same 4 chunks:
+#   front  oski_walk8s_front_r2  $0.4614  (~/mocap-lane/HANDOFF.md:120)
+#          -> 0.4614 / 0.000305556 = 1510.0 GPU-s -> 377.5 s per chunk
+#   side   oski_walk8s_side_r2   $0.53    (~/mocap-lane/CHANGELOG.md:107)
+#          -> 0.5300 / 0.000305556 = 1734.5 GPU-s -> 433.6 s per chunk
+#
+# THE TWO-RIG INCREMENT IS NOT MEASURABLE WITHOUT RENDERING, so it is BOUNDED, not
+# estimated. The added work is one more armature+mesh in the path trace plus two extra
+# resolved cryptomattes and one extra idmask (cov_A_/cov_B_/idmaskB_, place_rig.py:701-740).
+# A character is a small fraction of a campus frame, so doubling the character cannot
+# double the frame -- but the fraction has not been measured here, so the honest upper
+# bound is that the WHOLE per-chunk wall doubles:
+#   two-rig worst-plausible chunk = 2 x 433.6 = 867.3 s
+#
+# EXPECTED vs WORST-CASE for the 8 runs below:
+#   floor       2 x $0.4614 (the front take, once per camera, if the second rig were free)
+#               = $0.92
+#   expected    8 x 870 s x $0.000305556 = $2.13     <- est_sec_per_epoch below
+#   worst case  8 x 2000 s x $0.000305556 = $4.89    <- every chunk hits its hard timeout
+# The realistic band is therefore $0.92 - $2.13, and the gate prices $4.89.
+# One camera only (delete either half of `runs`): floor $0.46, expected $1.06, worst $2.44.
+#
+# ============================================================================
+# KILL GUARD -- DERIVED FROM THE REALISTIC RANGE, NOT FROM THE ESTIMATE
+# ============================================================================
+# There are two guards and they fail in opposite directions. Both have been set below the
+# realistic cost before, twice today, so both arithmetic chains are written out.
+#
+# GUARD 1, max_runtime_sec (L2, modal_app.py BILL_SAFETY): Modal's server-side container
+# kill. THIS IS THE ONE THAT KILLS A HEALTHY RUN MID-FLIGHT and throws the spend away.
+# It must sit above the worst PLAUSIBLE wall, not above the expected one:
+#   proven headroom, from the config that actually rendered: 1000 / 433.6 = 2.306x
+#   guard = 2.306 x 867.3 s = 2000.0 s   -> max_runtime_sec: 2000
+# i.e. the pair take keeps EXACTLY the margin the single-rig take was proven at, applied
+# to the doubled bound. It is not generosity: L4, the dead-man switch, is what actually
+# bounds a hang (600 s with no forward progress, and Blender writes a frame roughly every
+# 867.3/50 = 17.3 s), so a loose L2 costs nothing on a wedged job and a tight L2 costs the
+# whole chunk on a slow one.
+#
+# GUARD 2, MODALLABS_MAX_USD (the pre-spawn ceiling): this one BLOCKS AT LAUNCH, it does
+# not kill mid-flight. It gates on the WORST case, never the expected one
+# (estimate_total_cost_usd, modal_app.py:348-352), so it must be >= $4.89 or this config
+# never starts. DO NOT set it from the $2.13 expected figure -- that is the same mistake
+# in the other direction. The default ceiling is $25.00 (modal_app.py:79) and already
+# clears $4.89 by 5.1x, so NO OVERRIDE IS NEEDED and none is recommended. If a deliberate
+# tighter ceiling is wanted for this launch, $6 is the smallest honest one (worst case
+# $4.89 x 1.23).
+#
+# ============================================================================
+# THE TAR LANDMINE -- this cost a run today. Read before staging.
+# ============================================================================
+# WHICH SCRIPT: scripts/stage_oski_take.sh, NOT stage_berkeley_take.sh. Determined from
+# the worker, not from a docstring: heroshot_take._resolve_root (heroshot_take.py:130)
+# prefers /busd_take.tar and untars it to /tmp/busd, falling back to the FUSE mount only
+# if the tar is absent -- so whatever the tar holds IS the render's input tree. Only
+# stage_oski_take.sh builds a tar containing `characters` (its tar line, vs
+# stage_berkeley_take.sh which tars `usd textures tools rig shots` and puts the rig at
+# /rig/rigged.glb rather than /rig/<char>/rigged.glb). This config needs BOTH additions.
+#
+# THE TRAP: `for R in "$@"` -- stage_oski_take.sh symlinks ONLY the retargets it is passed
+# and then rebuilds busd_take.tar from scratch. Stage just the two new fight shots and the
+# tar comes back holding two files, walk8s.json and every other shot vanish from the tree
+# the workers read, and nothing warns you: the FUSE mount still has them, and _resolve_root
+# never looks there while the tar exists.
+#
+# WORSE, and checked here rather than discovered: `modal volume ls berkeley-usd-take /shots`
+# lists 19 retargets and only 18 have a local counterpart under ~/Desktop/berkeley-usd/shots.
+# retarget_walk270_fix.json exists ONLY on the volume (searched berkeley-usd, golden-rig,
+# 3dmotions -- no hit) and three live configs still reference it (heroshot_w270_fleet.yaml,
+# heroshot_pilot.yaml, heroshot_w270_npr_compare.yaml). A rebuild would delete it
+# permanently. Rescue it FIRST -- verified 2026-08-19, 1,483,268 bytes recovered:
+#
+#   cd ~/Desktop/berkeley-usd/shots/runToCampanile
+#   ~/hf-gpu-cluster-optimizer/.venv/bin/modal volume get berkeley-usd-take \
+#       /shots/retarget_walk270_fix.json ./retarget_walk270_fix.json
+#
+# THE CORRECT INVOCATION -- every shot already on the volume, PLUS the three new ones:
+#
+#   cd ~/Desktop/berkeley-usd/shots
+#   ~/hf-gpu-cluster-optimizer/scripts/stage_oski_take.sh \
+#     runToCampanile/retarget_walk270_fix.json \
+#     runToCampanile/retarget_junction.json \
+#     runToCampanile/retarget_bounce270.json \
+#     runToCampanile/retarget_hero10s.json \
+#     runToCampanile/retarget_hero20s.json \
+#     runToCampanile/retarget_hero34s.json \
+#     runToCampanile/retarget_bounce34s.json \
+#     oskiTour/crane_glade.json \
+#     oskiTour/crane_doe.json \
+#     oskiTour/crane_campanile.json \
+#     oskiMoon/moonshot_glade.json \
+#     oskiMoon/moonshot_laneB.json \
+#     oskiMoon/moonshot_capture.json \
+#     oskiWalk/walkToLandmarks.json \
+#     oskiWalk/segA.json \
+#     oskiWalk/segB.json \
+#     oskiWalk/walk8s.json \
+#     oskiWalk/walk8s_front.json \
+#     oskiWalk/walk8s_side.json \
+#     oskiFight/walk8s_wide.json \
+#     oskiFight/walk8s_birdseye.json \
+#     oskiFight/fight_B.json
+#
+# Note the flattening: stage_oski_take.sh stages every argument as /shots/$(basename $R),
+# so oskiFight/walk8s_wide.json lands at shots/walk8s_wide.json and that is the path the
+# `retarget:` keys below use.
+#
+# PROVE IT, do not assume it -- absence of an error is not evidence. Both of these must
+# pass before launch, and the second is the landmine check:
+#
+#   tar -tf /tmp/busd_take.tar | grep '^shots/' | sort        # 22 lines, old AND new
+#   tar -tf /tmp/busd_take.tar | grep -c 'shots/walk8s.json'  # must be 1, not 0
+#
+# (stage_oski_take.sh builds the tar in a mktemp dir and deletes it; to keep a copy for
+# these checks, run the script with ST preserved or re-run `tar -tf` against the volume
+# copy via `modal volume get berkeley-usd-take /busd_take.tar`.)
+#
+# ============================================================================
+# LAUNCH -- one command, after the three pre-flight items below
+# ============================================================================
+# PRE-FLIGHT, in order, none of them optional:
+#   1. the heroshot_take.py passthrough hunk above -- without it this is a one-rig render
+#      at two-rig price, and it reports green;
+#   2. shots/oskiFight/fight_B.json must EXIST. It did not when this config was written
+#      (2026-08-19 20:23; oskiFight held only cams.json + the two A-rig retargets), and
+#      the name here is the round's pinned filename, referenced verbatim. place_rig
+#      requires R_B["gate_pass"] true and R_B["n"] >= 201 (place_rig.py:1525-1535);
+#   3. the tar staged with EVERY shot, per the landmine section above. Do the
+#      `modal volume get` rescue BEFORE launching, never during -- a volume get against
+#      a live app is a documented hazard (~/mocap-lane/HANDOFF.md:82).
+#
+# THE COMMAND -- this exact form, verified 2026-08-19 (the README's
+# `modal run modallabs/modal_app.py` form does not match this checkout's layout; the form
+# below is the one the front take actually launched with, ~/mocap-lane/HANDOFF.md:70,480):
+#
+#   cd ~/hf-gpu-cluster-optimizer
+#   ./.venv/bin/modal run modal_app.py --config configs/oski_fight_pair.yaml
+#
+# Append --dry-run for the free preview -- it short-circuits before any image is hydrated
+# (modal_app.py:440-465) and exits 2 if the ceiling blocks, 0 if it clears, so it is a
+# usable CI gate. MEASURED on this file: $4.89 worst case, exit 0 at the $25 default.
+run_id: oski_fight_pair_r1
+
+# Shared by both cameras. `retarget` is deliberately NOT here -- it is the only field that
+# differs between the two, which is what makes this a controlled pair rather than two shots.
+_fight: &fight
+  frames: 201
+  res: 1536x768
+  samples: 96
+  look: magical                 # never defaulted: heroshot_take.py:186 refuses an unset look
+  npr: cel
+  npr_mix: 0.65
+  outline: "off"
+  camera: bcHeroGladeCam
+  guide_passes: true
+  glb: rig/oski/rigged.glb
+  style_card: characters/oski/style.json
+  glb_b: rig/oski/rigged.glb            # same asset, different performance (place_rig.py:174)
+  retarget_b: shots/fight_B.json        # authored under shots/oskiFight/, staged flat
+  style_card_b: characters/oski/style.json   # NOT defaultable -- see the surface note above
+  allow_fused: "fight pair: RENDERED take, fused asset stated for BOTH characters"
+  # NO char_key -- place_rig.py:205 refuses it with glb_b.
+
+_wide: &wide
+  <<: *fight
+  retarget: shots/walk8s_wide.json
+
+_birdseye: &birdseye
+  <<: *fight
+  retarget: shots/walk8s_birdseye.json
+
+runs:
+  # ---- wide: lens 18, r 4.0, az -26.788479 travel-relative -----------------
+  - name: fw00
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 2000, est_sec_per_epoch: 870}
+    config: {<<: *wide, frame_start: 0,   frame_end: 51}
+  - name: fw01
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 2000, est_sec_per_epoch: 870}
+    config: {<<: *wide, frame_start: 51,  frame_end: 101}
+  - name: fw02
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 2000, est_sec_per_epoch: 870}
+    config: {<<: *wide, frame_start: 101, frame_end: 151}
+  - name: fw03
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 2000, est_sec_per_epoch: 870}
+    config: {<<: *wide, frame_start: 151, frame_end: 201}
+  # ---- birdseye: lens 40, r 4.5, h 4.576, az 0 -- the punch-legible camera --
+  - name: fb00
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 2000, est_sec_per_epoch: 870}
+    config: {<<: *birdseye, frame_start: 0,   frame_end: 51}
+  - name: fb01
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 2000, est_sec_per_epoch: 870}
+    config: {<<: *birdseye, frame_start: 51,  frame_end: 101}
+  - name: fb02
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 2000, est_sec_per_epoch: 870}
+    config: {<<: *birdseye, frame_start: 101, frame_end: 151}
+  - name: fb03
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 2000, est_sec_per_epoch: 870}
+    config: {<<: *birdseye, frame_start: 151, frame_end: 201}
