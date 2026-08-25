@@ -1,0 +1,106 @@
+# R2 -- THE NORMAL PASS RE-RENDER (wide camera az -62). 2026-08-25.
+#
+# WHY THIS EXISTS. r1's normal_ pass is BROKEN and its files are unusable: the writer
+# fed the Normal render-layer output through CompositorNodeMapValue, whose inputs[0] is
+# a VALUE socket, so the 3-vector collapsed to (x+y+z)/3 and every normal_ PNG shipped
+# with its three channels BYTE-IDENTICAL -- a greyscale image where a world-space normal
+# should be. A second defect sat inside the first: the scene grade
+# (view_settings.exposure = -5.9950) multiplied the COLOR-socket data on the way out.
+#
+# WHAT CHANGED. Only tools/heroshot/place_rig.py (the normal writer, ~:3377-3450):
+# MapValue -> two CompositorNodeMixRGB (MULTIPLY 0.5, ADD 0.5), and exposure/gamma
+# pinned to 0.0/1.0 on that writer. place_rig.py script_sha256 moves
+# 65d18f96... (r1) -> 53ab9300..., so these chunks CANNOT cache-hit r1.
+#
+# PROVEN BEFORE SPENDING (local M5 Metal, frame 100/101, $0):
+#   Evans mean (95.65,95.65,95.65) std (27.16,27.16,27.16)  ->  (37.59,146.66,102.71)
+#   std (20.64,66.88,43.59), |n| = 0.987; normal space is WORLD (0.001 deg off world +Z
+#   from two cameras 115.7 deg apart); cross-view consistency median 1.42 deg with 92.9%
+#   under 10 deg over 48,982 Evans correspondences. Reds fired: scrambled 50.86 deg,
+#   camera-space 54.09 deg.
+#
+# WHY NOT DERIVE IT FROM depth_ FOR $0 (measured 2026-08-25, REFUTED): depth is
+# sqrt-disparity 16-bit, precision-allocated to the near field. Derived normals score
+# median 1.0-1.3 deg on ground and 0.6-1.1 deg on the hero, but 38-42 deg on buildings
+# and 29-34 deg on foliage -- the hero gets 6,013 codes across 1.1 m while Evans gets
+# 1,304 codes across 29 m (~22 mm/code against a ~100 mm pixel footprint), so a facade's
+# depth gradient resolves to ~2 levels per pixel and the derived normal is a
+# quantisation staircase. Buildings are exactly what this pass is needed for.
+#
+# EVERY OTHER KEY IS BYTE-IDENTICAL TO r1 -- same samples, res, look, npr, char_key,
+# facade pitch, camera and chunking -- so this moves ONE variable. All r1 landmines
+# below still apply, including the FULL shot list when staging.
+# SIDE-CAMERA TWIN of oski_walk8s_facade.yaml (az -62, sees the Campanile ids 185-190).
+# Authored 2026-08-24: run_id + retarget are the ONLY changed keys; header below is the gaitq original's.
+# OSKI WALK8S -- FACADE take. 201 frames, 1536x768, 96 spp, 4 concurrent A10G chunks.
+#
+# THE ONE CHANGE vs oski_walk8s_armfix.yaml: fenestration is ON. Three keys added to the
+# anchor (facade / facade_floor / facade_bay -- heroshot_take.py:213-215 -> place_rig.py
+# --facade at :110, facade.apply at :1055-1058) and a new run_id; every other key is
+# byte-identical to the armfix take, so the A/B against walk8s_armfix_take moves ONE
+# variable. The facade is a digest input (place_rig.py:563), so these chunks can never
+# CACHE-HIT against the facade-off take.
+#
+# THE PITCH IS MEASURED, NOT DEFAULTED -- setting `facade: true` without the two pitch
+# keys would shade the refuted 3.9 m / 4.2 m fallback lattice (outside derive_floors'
+# own 95% CI [2.63, 3.47]; ~31%/~39% off Evans's mesh). 2.9688 / 3.0312 are Evans's own
+# measured storey band (54 recess plane pairs at exact 0.1016 m offsets) and stFen bay
+# (76 bays); across the six buildings this camera frames the residual is <= 3.3% for
+# ~97% of building pixels (worst: Hearst Mining -10%, mean 177 seg px). Record:
+# bldgspec building_specs.json (2026-08-24 survey).
+#
+# WHAT THE LOCAL A/B MEASURED BEFORE THIS CONFIG EXISTED (M5 Metal, frame 100, this res,
+# 32 spp, facade.py post frame-fix + strip-glazing lookdev): Evans interior levels
+# 40 -> 43, Sobel 0.0543 -> 0.0553, 691 px |dL|>4 (max 18.9). The mechanism is proven
+# (grid confirmed by emission-mask render; 198 of the 199 strongest beauty diffs are
+# Evans id-50 pixels) but in THIS shot Evans is shaded, tree-occluded, and its visible
+# top is parapet tiers (roof material, correctly windowless), so the beauty-side gain is
+# modest. Judge the paid take against that expectation, not against a hoped-for jump.
+#
+# ECONOMICS (do not launch without approval): measured band for this shape
+# $0.62-$0.65 settled on healthy placement, $0.87 with placement variance. A10G stays
+# cheapest AND fastest for Cycles here; do not switch GPU.
+#
+# LANDMINE unchanged from armfix: walk8s_armdown00_shot.json MUST be inside
+# busd_take.tar, not merely loose on the FUSE mount -- _resolve_root prefers the tar.
+# Stage via scripts/stage_oski_take.sh with the FULL shot list. The tar must also carry
+# the CURRENT tools/heroshot (facade.py's frame fix ships as a sibling module;
+# script_sha256 hashes place_rig.py only and CANNOT see a stale facade.py).
+run_id: oski_walk8s_facade_side_r2
+
+_gaitq: &gaitq
+  retarget: shots/walk8s_armdown00_side.json
+  frames: 201
+  res: 1536x768
+  samples: 96
+  look: magical
+  npr: cel
+  npr_mix: 0.65
+  outline: "off"
+  char_key: 0.20
+  camera: bcHeroGladeCam
+  guide_passes: true
+  glb: rig/oski/rigged.glb
+  style_card: characters/oski/style.json
+  allow_fused: "gait camera: RENDERED take, fused asset stated"
+  facade: true
+  facade_floor: 2.9688
+  facade_bay: 3.0312
+
+runs:
+  - name: q00
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1000, est_sec_per_epoch: 400}
+    config: {<<: *gaitq, frame_start: 0,  frame_end: 51}
+  - name: q01
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1000, est_sec_per_epoch: 400}
+    config: {<<: *gaitq, frame_start: 51, frame_end: 101}
+  - name: q02
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1000, est_sec_per_epoch: 400}
+    config: {<<: *gaitq, frame_start: 101, frame_end: 151}
+  - name: q03
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1000, est_sec_per_epoch: 400}
+    config: {<<: *gaitq, frame_start: 151, frame_end: 201}

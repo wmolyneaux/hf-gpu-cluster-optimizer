@@ -29,6 +29,7 @@ ASCII only. No emojis.
 """
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import os
@@ -87,6 +88,228 @@ _MAX_ATTEMPTS = 2
 # stale script, so all eight agree and the cross-worker equality band PASSES.
 # Determinism is not correctness, and the invoice arrives either way.
 _PIN_REQUIRED = "tools/heroshot/place_rig.py"
+
+# ==============================================================================
+# THE ARGV SPEC -- ONE DECLARATION OF EVERY CONFIG KEY (2026-08-19)
+# ==============================================================================
+# ROOT CAUSE, stated before the fix. Three comment blocks in _run_blender below
+# each record the SAME failure -- style_card, char_key, guide_passes: a key sat in
+# a shot config, this lane had no reference to it, and the render came back GREEN
+# with the setting silently dropped. Three fixes, three hand-written lists, and the
+# fourth instance arrived anyway: --glb-b / --retarget-b / --style-card-b
+# (place_rig.py:178-183, the WP5 second character) were in none of the lists, so
+# oski_fight_pair.yaml built the SAME argv as a one-rig walk.
+#
+# That is worse than an error, because place_rig's second rig is ADDITIVE and
+# --glb-b is its only trigger (place_rig.py:140-150): absent the flag the run is
+# byte-identical to a one-character take -- same digest inputs, same cov_ filename,
+# same pass_index 7 -- so it prices, stages, renders, gates and reports green ONE
+# FIGHTER SHORT AT TWO-FIGHTER PRICE. FALSIFIED at $0, 2026-08-19: two configs
+# differing only in the second rig produced ONE IDENTICAL argv sha256.
+#
+# THE ROOT IS NOT THE THREE MISSING FLAGS. It is that THE SET OF CONFIG KEYS WAS
+# DECLARED NOWHERE. It existed implicitly in two places that cannot see each other:
+# the argv builder's literal lists (which defined "keys that reach the renderer")
+# and from_config's _REQUIRED + setdefault calls (which defined "keys the trainer
+# validates"). Neither is a statement of which keys EXIST, so a key that is in the
+# config and in neither list is dropped in silence -- and so is a TYPO, which is
+# the same bug with a shorter fuse and no config comment warning about it.
+#
+# WHICH FIX, AND WHY. The two candidates -- "make an unrecognised config key an
+# error" and "drive the argv from a declared table" -- are not alternatives: the
+# rejection CANNOT BE WRITTEN without the declaration, because "unknown" is only
+# definable against a known set, and hand-listing that set would be the same
+# hand-list one layer up. So the table is the fix and the rejection is what makes
+# it load-bearing rather than documentation. One table feeds all three consumers --
+# the argv build, the minute-0 staging asserts, and the unknown-key refusal -- so a
+# new place_rig flag is ONE ROW here instead of three edits in three functions, and
+# forgetting the row is an error instead of a silent drop.
+#
+# The table mirrors place_rig's ENTIRE flag surface as of 2026-08-19 -- 36 flags,
+# 32 `opt("--x", ...)` plus 4 `"--x" in argv` -- not merely the keys some config
+# happens to carry today. A table covering only the flags we remembered is the
+# hand-list again with extra ceremony.
+#
+# BYTE-IDENTITY IS THE CONSTRAINT THIS TABLE HAD TO SURVIVE. place_rig's one-rig
+# guarantee is worth nothing unless the lane keeps handing it the same bytes, so
+# the ROW ORDER BELOW IS THE EMISSION ORDER the hand-written code had, and every
+# `kind` reproduces one existing emission rule exactly, down to its emptiness test.
+# The kinds are deliberately NOT collapsed into one, and that is measured rather
+# than fussy:
+#   * opt_text and opt_strip differ on a FALSY-BUT-SET value, and npr_mix: 0.0 is
+#     exactly that value -- place_rig.py:127 calls 0.0 "provable identity", i.e. a
+#     meaningful setting. Under opt_text (what this file does today) it emits
+#     `--npr-mix 0.0`; under opt_strip's `or ""` test it would VANISH. Unifying the
+#     two would have silently re-introduced this file's own bug while fixing it.
+#   * opt_raw and opt_text differ only in whether the value is .strip()ed. No
+#     config in the tree distinguishes them (YAML strips plain scalars), so
+#     unifying is PROBABLY inert -- but probably-inert is not proven-inert, and the
+#     whole claim this table has to earn is that it is argv-identical for every
+#     one-rig run that already shipped. Kept as written.
+#
+# KINDS. The first four are unconditional; the last five are passthroughs that
+# appear only when the config carries a value:
+#   req_path   always; value = str(root / cfg[key])       -- volume-relative path
+#   req_value  always; value = str(cfg[key])
+#   runtime    always; value supplied by the CALLER, not by the config -- the frame
+#              window and the output dir are the lane's to compute, not a shot's
+#   bare       always; the flag alone, no config key
+#   opt_path   when str(cfg.get(k) or "").strip() is truthy; value root-joined
+#   opt_strip  same test; value is the stripped string, not a path
+#   opt_raw    when cfg.get(k) not in (None, ""); value str()'d UNSTRIPPED
+#   opt_text   when v is not None and str(v).strip() != ""; value stripped
+#   opt_bare   when cfg.get(k) is truthy; the flag alone
+_ARGV_SPEC = (
+    # ---- the unconditional head, in the order it has always been emitted -----
+    ("retarget",        "--retarget",        "req_path"),
+    ("frames",          "--frames",          "runtime"),
+    ("frame_start",     "--frame-start",     "runtime"),
+    ("frame_end",       "--frame-end",       "runtime"),
+    ("res",             "--res",             "req_value"),
+    ("samples",         "--samples",         "req_value"),
+    ("look",            "--look",            "req_value"),
+    ("stage",           "--stage",           "req_path"),
+    ("glb",             "--glb",             "req_path"),
+    (None,              "--resume",          "bare"),
+    (None,              "--outdir",          "runtime"),
+    # ---- passthroughs, in the order they were added by hand ------------------
+    ("style_card",      "--style-card",      "opt_path"),
+    ("char_key",        "--char-key",        "opt_raw"),
+    ("char_key_ring",   "--char-key-ring",   "opt_raw"),
+    ("char_key_offset", "--char-key-offset", "opt_raw"),
+    ("char_key_size",   "--char-key-size",   "opt_raw"),
+    ("guide_passes",    "--guide-passes",    "opt_bare"),
+    ("allow_fused",     "--allow-fused",     "opt_strip"),
+    ("npr",             "--npr",             "opt_text"),
+    ("npr_mix",         "--npr-mix",         "opt_text"),
+    ("outline",         "--outline",         "opt_text"),
+    ("flower_extent",   "--flower-extent",   "opt_text"),
+    ("camera",          "--camera",          "opt_text"),
+    # ---- WP5: THE SECOND CHARACTER (2026-08-19). The three that were inert. --
+    # Volume-relative like --glb, and OPTIONAL here because --glb-b is place_rig's
+    # only WP5 trigger. place_rig owns the pairing refusals -- --glb-b without
+    # --retarget-b is a SystemExit at place_rig.py:184, --glb-b with --prop or
+    # --char-key at :199 and :205 -- and this lane forwards what the config said
+    # rather than re-deriving somebody else's gate.
+    # style_card_b is NOT defaultable and that is derived, not tidiness:
+    # place_rig.py:182 resolves an unset B card as a SIBLING of --glb-b, i.e.
+    # rig/<char>/style.json, which is NOT where the stager puts the card
+    # (stage_oski_take.sh:41,56 -> characters/<char>/style.json), and
+    # _asset_identity swallows an unreadable card (place_rig.py:290-293) -- so an
+    # unset B card ships the two fighters with different subsurface budgets and it
+    # reads as a look decision.
+    ("glb_b",           "--glb-b",           "opt_path"),
+    ("retarget_b",      "--retarget-b",      "opt_path"),
+    ("style_card_b",    "--style-card-b",    "opt_path"),
+    # ---- THE REST OF place_rig'S SURFACE ------------------------------------
+    # Nothing under configs/ sets any of these today (audited 2026-08-19: 23
+    # heroshot_take run configs, 20 distinct keys, every one of them covered
+    # above), so adding them moves no existing argv by a byte. They are here so
+    # that SETTING one is a render change rather than a no-op -- which is the
+    # entire point of the table, and the exact thing glb_b was not.
+    ("prop",            "--prop",            "opt_path"),
+    ("prop_scale",      "--prop-scale",      "opt_text"),
+    ("char_material",   "--char-material",   "opt_text"),
+    ("facade",          "--facade",          "opt_bare"),
+    ("facade_floor",    "--facade-floor",    "opt_text"),
+    ("facade_bay",      "--facade-bay",      "opt_text"),
+    # ---- SCENIC ASSET + LOCKED-OFF SHOTS (2026-08-25) -----------------------
+    # place_rig gained six flags for the Y-wing glade scene. They are declared HERE
+    # because this table defines what reaches the renderer: a key absent from it is
+    # not "ignored", it is REFUSED by the unknown-key check, and adding one silently
+    # to the config would render the take WITHOUT the asset while reporting success.
+    # scenic_at/scenic_length are opt_text, not opt_path -- they are a coordinate pair
+    # and a measured length, not volume-relative files.
+    ("scenic",          "--scenic",          "opt_path"),
+    ("scenic_at",       "--scenic-at",       "opt_text"),
+    ("scenic_length",   "--scenic-length",   "opt_text"),
+    ("scenic_yaw",      "--scenic-yaw",      "opt_text"),
+    ("subject_enters",  "--subject-enters",  "opt_text"),
+    ("surface_smooth",  "--surface-smooth",  "opt_text"),
+    ("haze",            "--haze",            "opt_text"),
+    ("visibility_m",    "--visibility-m",    "opt_text"),
+    ("sky_plate",       "--sky-plate",       "opt_path"),
+    ("exr_aov",         "--exr-aov",         "opt_bare"),
+)
+# Flags the LANE owns, which a shot config may not set. These are not shot
+# decisions: one run is one frame WINDOW, written under the run dir the harness
+# allocated and resumed in place, which is what --frame-start/--frame-end are
+# digest inputs FOR. Named here so that setting one earns a reason instead of a
+# generic "unknown key".
+_LANE_OWNED = {
+    "outdir": "--outdir is the run dir the harness allocates; a shot cannot move it",
+    "resume": "--resume is always on -- it is what makes a re-entered window cheap",
+}
+# Config keys the TRAINER itself consumes, which never become place_rig flags.
+_TRAINER_KEYS = frozenset({"pilot", "stub", "epochs",
+                           "expect_sha256", "allow_unpinned"})
+_FLAG_KEYS = frozenset(k for k, _f, _kind in _ARGV_SPEC if k)
+_KNOWN_KEYS = _FLAG_KEYS | _TRAINER_KEYS
+
+
+def _build_argv(cfg: Dict[str, Any], root: Path,
+                runtime: Dict[str, Any]) -> List[str]:
+    """The place_rig argv, built from _ARGV_SPEC and nothing else.
+
+    `runtime` carries the values the LANE owns rather than the config: the frame
+    window and the output dir, keyed by flag. Everything else comes from cfg.
+    """
+    argv: List[str] = []
+    for key, flag, kind in _ARGV_SPEC:
+        if kind == "bare":
+            argv += [flag]
+        elif kind == "runtime":
+            argv += [flag, str(runtime[flag])]
+        elif kind == "req_path":
+            argv += [flag, str(root / str(cfg[key]))]
+        elif kind == "req_value":
+            argv += [flag, str(cfg[key])]
+        elif kind == "opt_path":
+            v = str(cfg.get(key) or "").strip()
+            if v:
+                argv += [flag, str(root / v)]
+        elif kind == "opt_strip":
+            v = str(cfg.get(key) or "").strip()
+            if v:
+                argv += [flag, v]
+        elif kind == "opt_raw":
+            if cfg.get(key) not in (None, ""):
+                argv += [flag, str(cfg[key])]
+        elif kind == "opt_text":
+            v = cfg.get(key)
+            if v is not None and str(v).strip() != "":
+                argv += [flag, str(v).strip()]
+        elif kind == "opt_bare":
+            if cfg.get(key):
+                argv += [flag]
+        else:                                        # unreachable by construction
+            raise HeroshotTakeError(
+                f"_ARGV_SPEC row {flag} declares kind {kind!r}, which _build_argv "
+                "does not implement. A row whose kind is not handled would emit "
+                "NOTHING, which is the silent drop this table exists to end.")
+    return argv
+
+
+def _config_paths(cfg: Dict[str, Any], root: Path) -> List[Path]:
+    """Every volume-relative path the argv will name -- from the SAME table that
+    builds the argv, so the two cannot drift.
+
+    The staging asserts in setup() were a SECOND hand-written list and had
+    already drifted: they checked retarget/stage/glb and not style_card, so a
+    card that never reached the volume failed silently inside place_rig
+    (_asset_identity swallows an unreadable card, place_rig.py:290-293) instead
+    of at minute 0 here. Deriving them makes 'staged' and 'passed to the
+    renderer' the same statement.
+    """
+    out: List[Path] = []
+    for key, _flag, kind in _ARGV_SPEC:
+        if kind == "req_path":
+            out.append(root / str(cfg[key]))
+        elif kind == "opt_path":
+            v = str(cfg.get(key) or "").strip()
+            if v:
+                out.append(root / v)
+    return out
 
 
 def _sha256_file(p: Path) -> str:
@@ -163,6 +386,39 @@ class HeroshotTakeTrainer(Trainer):
     # ------------------------------------------------------------------ config
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> "HeroshotTakeTrainer":
+        # UNKNOWN KEYS ARE FATAL (2026-08-19). See the _ARGV_SPEC header: until
+        # this line existed, a config key that no list mentioned was DROPPED IN
+        # SILENCE -- which is how glb_b/retarget_b/style_card_b priced a two-rig
+        # fight and rendered one character, and is equally how `stlye_card` would
+        # have rendered against place_rig's hard-coded hero_0454 default. There is
+        # no cheaper place to catch either: the alternative is reading pixels.
+        # AUDITED before landing, because strictness that reddens shipped work is
+        # a different bug: all 23 heroshot_take run configs under configs/ were
+        # parsed and their config: blocks union to 20 distinct keys, every one of
+        # them declared below -- so this refusal turns nothing red today. The
+        # harness-level keys (name, type, modal, seed, device, logger) sit OUTSIDE
+        # the config: block (runner.py:265-269 reads run_cfg["config"]), so they
+        # never reach here; expect_sha256 is injected by the launcher
+        # (modal_app.py:341) and is declared in _TRAINER_KEYS.
+        unknown = sorted(set(config) - _KNOWN_KEYS)
+        if unknown:
+            why = []
+            for k in unknown:
+                if k in _LANE_OWNED:
+                    why.append(f"{k}: {_LANE_OWNED[k]}")
+                    continue
+                near = difflib.get_close_matches(k, sorted(_KNOWN_KEYS), 1, 0.7)
+                why.append(f"{k}: not a heroshot_take config key"
+                           + (f" -- did you mean {near[0]!r}?" if near else ""))
+            raise HeroshotTakeError(
+                "heroshot_take config carries key(s) this lane does not know:\n  "
+                + "\n  ".join(why)
+                + "\nRefusing rather than ignoring them. A key the lane does not "
+                  "read is indistinguishable from a key that does nothing, and the "
+                  "render comes back GREEN either way -- that is the failure the "
+                  "_ARGV_SPEC block above exists to end. If the key is a real "
+                  "place_rig flag, add ONE ROW to _ARGV_SPEC; if it is a typo, the "
+                  "suggestion above is the fix.")
         missing = [k for k in _REQUIRED if k not in config]
         if missing:
             raise HeroshotTakeError(f"heroshot_take config missing keys: {missing}")
@@ -277,16 +533,20 @@ class HeroshotTakeTrainer(Trainer):
         root = self._root
         # Fail at minute 0, before any GPU sampling: every input the render
         # will read must already be staged, and the binary must run.
+        # The fixed infrastructure every take reads, then EVERY volume-relative
+        # path the argv will actually name -- derived from _ARGV_SPEC rather than
+        # listed again here (see _config_paths: this list had already drifted from
+        # the argv builder, checking retarget/stage/glb and not style_card).
+        # Deriving it also means the second rig is staged-checked at minute 0: a
+        # missing glb_b/retarget_b/style_card_b now refuses before the container
+        # is warm instead of inside place_rig after the GPU is billing.
         needed = [
             Path(_BLENDER),
             root / "tools/heroshot/place_rig.py",
             root / "tools/render/lut_repair.py",
             root / "tools/render/material_lut.json",
-            root / cfg["retarget"],
-            root / cfg["stage"],
-            root / cfg["glb"],
             root / "textures/_sky/campusSky_2026-09-22T0910PDT.exr",
-        ]
+        ] + _config_paths(cfg, root)
         for p in needed:
             if not p.exists() or (p.is_file() and p.stat().st_size == 0):
                 raise HeroshotTakeError(f"input not staged: {p}")
@@ -308,77 +568,21 @@ class HeroshotTakeTrainer(Trainer):
         cfg = self.config
         root = self._root
         log_path = self._setup_obj.output_dir / f"blender_{tag}.log"
+        # ONE argv, built from _ARGV_SPEC (module header). What used to stand here
+        # was a literal list plus four hand-written passthrough loops, each added
+        # the day a config key was found to be doing nothing; the fifth such key
+        # -- the second rig -- was missing from all of them and cost a two-rig
+        # price for a one-rig render. The reasoning those loops carried has moved
+        # into the table's rows and header, where a new flag is one line.
         argv = [
             _BLENDER, "-b", "--factory-startup",
             "-P", str(root / "tools/heroshot/place_rig.py"), "--",
-            "--retarget", str(root / cfg["retarget"]),
-            "--frames", str(frames),
-            "--frame-start", str(fstart), "--frame-end", str(fend),
-            "--res", str(cfg["res"]), "--samples", str(cfg["samples"]),
-            "--look", str(cfg["look"]),
-            "--stage", str(root / cfg["stage"]),
-            "--glb", str(root / cfg["glb"]),
-            "--resume",
-            "--outdir", str(outdir),
-        ]
-        # STYLE CARD passthrough. place_rig.py:138 defaults --style-card to
-        # ~/golden-rig/library/characters/hero_0454/style.json, which exists on the M5
-        # and NOWHERE on a worker -- so any character other than hero_0454 either
-        # crashed at the json.load or, worse, would have rendered against HER card.
-        # Same failure class the char_key note below describes: a pixel-affecting input
-        # the config can set and the lane silently drops. Resolved against the volume
-        # root like every other path here.
-        if str(cfg.get("style_card") or "").strip():
-            argv += ["--style-card", str(root / str(cfg["style_card"]).strip())]
-        # CHARACTER KEY passthrough (2026-08-12). Added because the flag existed in
-        # place_rig, was in the shot config, and was SILENTLY DROPPED here -- the lane
-        # simply had no reference to it, so every render came back with her at 18.76
-        # luminance and nobody could see why the setting "did nothing".
-        # A pixel-affecting flag that a config can set and the lane can ignore is the
-        # same failure class as a default that wins silently. If it is in the config
-        # it must reach the renderer or the run must say it did not.
-        for _k, _flag in (("char_key", "--char-key"),
-                          ("char_key_ring", "--char-key-ring"),
-                          ("char_key_offset", "--char-key-offset"),
-                          ("char_key_size", "--char-key-size")):
-            if cfg.get(_k) not in (None, ""):
-                argv += [_flag, str(cfg[_k])]
-        # BOOLEAN passthroughs. Separate loop because these are FLAGS, not values --
-        # `--guide-passes` takes no argument. This was lost once already: it lived in
-        # a block I deleted as a duplicate of the npr passthrough, and the config
-        # carried guide_passes: true through a whole $1.20 render that wrote no
-        # guides. Same failure as char_key, one hour apart. A config key that the
-        # lane does not read is indistinguishable from a key that does nothing.
-        for _k, _flag in (("guide_passes", "--guide-passes"),):
-            if cfg.get(_k):
-                argv += [_flag]
-
-        # ASSET GATE passthrough. The post-NPR place_rig (v2.3.2) refuses the
-        # FUSED rigged.glb unless given a stated structural reason:
-        # MEASURED 2026-08-12, rc=1 in 1.48 s against the freshly re-staged
-        # volume. Deliberately NOT defaulted to some boilerplate string here --
-        # that would cloak a gate whose entire purpose is to make rendering the
-        # fused asset a choice somebody typed. Put the reason in the run config
-        # (allow_fused: "...") where it is reviewed and recorded, or let the
-        # render refuse.
-        if str(cfg.get("allow_fused") or "").strip():
-            argv += ["--allow-fused", str(cfg["allow_fused"]).strip()]
-        # SHOT-CRITICAL passthrough (2026-08-12, runToCampanile NPR fleet).
-        # All five are place_rig DIGEST inputs; every one has a default that is
-        # WRONG for the NPR shot (npr=off, npr_mix=1.0, flower_extent="" which
-        # re-derives the corridor from THIS take's travel and relocates all
-        # 2200 wildflowers -- RUN-SHOT.md calls it "the trap"). Appended only
-        # when the config carries a non-empty value, so every existing plain
-        # config builds the byte-identical argv it always did. Values pass as
-        # str() of what the YAML holds; flower_extent should be QUOTED in the
-        # YAML so no float re-parse can move its digits between workers.
-        for key, flag in (("npr", "--npr"), ("npr_mix", "--npr-mix"),
-                          ("outline", "--outline"),
-                          ("flower_extent", "--flower-extent"),
-                          ("camera", "--camera")):
-            v = cfg.get(key)
-            if v is not None and str(v).strip() != "":
-                argv += [flag, str(v).strip()]
+        ] + _build_argv(cfg, root, {
+            "--frames": frames,
+            "--frame-start": fstart,
+            "--frame-end": fend,
+            "--outdir": outdir,
+        })
         env = dict(os.environ)
         env["BUSD_ROOT"] = str(root)
         env["PYTHONUNBUFFERED"] = "1"

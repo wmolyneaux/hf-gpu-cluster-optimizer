@@ -1,0 +1,97 @@
+# OSKI x Y-WING -- THE GLADE SCENE. 201 frames (8 s), 1536x768, 96 spp, 4 concurrent A10G.
+#
+# THE SHOT. A locked-off wide on Memorial Glade: the shimmered Y-wing parked on the lawn
+# at frame centre, Campanile behind, Oski entering frame-left at f86, mounting the hull
+# ~f110-135 and dancing on top to f200. The climb and the dance are INVENTED by the
+# restyle -- no jump or dance motion exists anywhere on disk. The Cycles guide supplies
+# only WHERE his body is; the ACTION clause routed to hero_cov supplies what he is doing.
+#
+# FIVE THINGS THIS CONFIG IS THE FIRST TO USE, each built because a gate refused, not
+# because it was planned:
+#   scenic*         place_rig's --prop is the RIDE lane (it demands ride_shot.py's rider
+#                   fit and reads the crank socket); a parked craft needs placement with
+#                   no rider. Seating is a FOUR-CORNER plane fit: the corners here span
+#                   1276 mm under a 16 x 9.2 m footprint, and a single centre raycast
+#                   floats one corner or buries the other.
+#   follow_cam kind "static"  orbit/hold are hero-RELATIVE, so the camera translates with
+#                   him (measured: a constant az -62 r 8.0 phase still moved 24.9014 m
+#                   over 201 frames) and he can never enter frame.
+#   subject_enters  he is legitimately absent at the gate frame. Skips the FRAMING half of
+#                   the take-state proof and SAYS so -- INTRODUCING-OBJECTS.md failure 6.
+#                   The occlusion half now reports VACUOUS at 0 px rather than passing on
+#                   `0 < 0`, and the coverage gate distinguishes a broken matte (empty
+#                   matte, ID mask sees pixels -- still refuses) from an absent subject.
+#   surface_smooth  a raycast onto a placed object is a STEP: +2.770 m in ONE frame as his
+#                   xy crosses the hull edge. Ramped over 25 frames -> largest step
+#                   0.124 m. ROOT CONTACT HEIGHT ONLY; no pose, no joint is authored.
+#
+# CAMERA DISTANCE IS SET BY THE ROUTING FLOOR, NOT BY TASTE. 10.02 m from the craft puts
+# the hero at 2103 px against routing.MIN_REGION_PX 2000. At the 16 m framing he measured
+# 822 px -- below the floor hero_cov is NOT an addressable region and the ACTION clause
+# has nothing to bind to, which would hand the dance to the global prompt instead of the
+# attention mask. Costs run-in time (enters f86, not f48); the dance is the payload.
+#
+# R2 (2026-08-25): SCALE 16.0 -> 4.0 m, and it is a DEFECT FIX, not a framing preference.
+# MEASURED on r1: prop0 held 248,053 px (21% of frame) and hero_cov was ABSENT on frames
+# 124-200 -- cov_ is the occlusion-aware resolved cryptomatte, so the craft was HIDING him
+# for the entire dance beat. Every frame he DID appear on cleared MIN_REGION_PX easily
+# (min 2255 px), so the fault was occlusion, not size. At 4.0 m the craft measures ~7,822
+# px -- 32x smaller -- and the hull top sits 0.77 m up, so the mount is a step rather than
+# the 2.770 m pop --surface-smooth had to ramp.
+#
+# SCALE IS DECLARED, NOT MEASURED. 4.0 m is a DRAMATIC choice. TheExperiment has no
+# calibrated dimension for this object -- the photos carry no reference and TRELLIS's
+# 0.98840 is arbitrary normalisation. 16.0 m implies a 9.22 m nacelle span and 3.06 m
+# height, which agree with canon Y-wing proportions, but that is lore, not a ruler.
+#
+# ASSET LIMITS, measured by TheExperiment and NOT fixed at render time: baseColor is
+# RADIANCE not albedo (de-lighting recovers 0.632 of I_gen mean luminance, and the
+# remaining 36.8% is the de-light assumption itself), so golden hour re-lights it a second
+# time; and only 11.18% of the atlas is shimmered, nose-on. Geometry IS real (7,873 ->
+# 755,808 tris, subsurf+displace applied to vertices), which is what the normal AOV reads.
+#
+# ECONOMICS: 4 x A10G, ~390 s/chunk measured on the r2 facade pair = ~$0.48 for the take.
+run_id: oski_ywing_glade_r2
+
+_shot: &shot
+  retarget: shots/ywing_glade_static.json
+  frames: 201
+  res: 1536x768
+  samples: 96
+  look: magical
+  npr: cel
+  npr_mix: 0.65
+  outline: "off"
+  char_key: 0.20
+  camera: bcHeroGladeCam
+  guide_passes: true
+  glb: rig/oski/rigged.glb
+  style_card: characters/oski/style.json
+  allow_fused: "locked-off glade wide: RENDERED take, fused asset stated"
+  facade: true
+  facade_floor: 2.9688
+  facade_bay: 3.0312
+  scenic: assets/ywing_recovered.glb
+  scenic_at: "-128.55,108.48"
+  scenic_length: "4.0"
+  scenic_yaw: "90"
+  subject_enters: "86"
+  surface_smooth: "25"
+
+runs:
+  - name: q00
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1200, est_sec_per_epoch: 420}
+    config: {<<: *shot, frame_start: 0,   frame_end: 51}
+  - name: q01
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1200, est_sec_per_epoch: 420}
+    config: {<<: *shot, frame_start: 51,  frame_end: 101}
+  - name: q02
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1200, est_sec_per_epoch: 420}
+    config: {<<: *shot, frame_start: 101, frame_end: 151}
+  - name: q03
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1200, est_sec_per_epoch: 420}
+    config: {<<: *shot, frame_start: 151, frame_end: 201}
