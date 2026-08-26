@@ -1,0 +1,64 @@
+# CAMERA A at az -35: the shipped az -115, +120 along the arc to az +5, then 40 BACK the
+# other way (Will, 2026-08-26: "move right 40 degrees since we moved it left 120").
+# Authored as a RIGID ROTATION of the az +5 solve about her_xy -- |cam-her| 28.004 and
+# |aim-her| 12.451 are preserved exactly.
+#
+# WHY THIS CONFIG DECLARES locked_off_wide, and why that is NOT threshold-lowering.
+# The az +5 take (oski_walk8s_campA120_r1) refused on ALL FOUR chunks:
+#   "feet are not in the framed region -- visible bbox bottom 0.5456 < 0.78 ... and the
+#    GROUND they stand on projects to v 0.5463 ... so no take could clear the gate
+#    through this camera"
+# That gate asserts a FRAMING CONTRACT between camera and subject. This camera is not
+# authored around Oski -- he runs through an establishing wide in which the campus is the
+# subject -- so the claim is inapplicable, the same split the prop skip and the pair-take
+# character-B skip already use. place_rig.py demands one test before any skip: WOULD A
+# RE-AIM SATISFY IT? Here the answer is provably NO -- an arc move is a rigid rotation
+# about the subject, so his feet project to the SAME v at EVERY azimuth. The occlusion
+# half of the proof is untouched and still enforced.
+#
+# ACCEPTED, NOT OVERLOOKED: at this width Oski measured 643 silhouette px on the az +5
+# take -- an order of magnitude BELOW the 7,029 px camera-B case that already failed to
+# stylize ("below what the latent can represent"). He will not read as a recognisable
+# character in this shot. That is the trade this camera makes for shared architecture.
+#
+# ECONOMICS: $0.62-0.65 healthy, $1.22 worst case, 4x A10G. Credits EXHAUSTED; bills the card.
+# LANDMINE: place_rig.py CHANGED (locked-off-wide + subject naming) -- re-stage or the
+# stale-volume pin refuses.
+run_id: oski_walk8s_campA80_r1
+
+_gaitq: &gaitq
+  retarget: shots/walk8s_campA80.json
+  frames: 201
+  res: 1536x768
+  samples: 96
+  look: magical
+  npr: cel
+  npr_mix: 0.65
+  outline: "off"
+  char_key: 0.20
+  camera: bcHeroGladeCam
+  guide_passes: true
+  glb: rig/oski/rigged.glb
+  style_card: characters/oski/style.json
+  allow_fused: "gait camera: RENDERED take, fused asset stated"
+  locked_off_wide: "establishing wide at az -35; the camera is authored around the campus,
+    not around Oski, and an arc move is a rigid rotation about him so no azimuth clears
+    0.78 (measured 0.5456 at az +5, ground 0.5463)"
+
+runs:
+  - name: q00
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1000, est_sec_per_epoch: 400}
+    config: {<<: *gaitq, frame_start: 0,  frame_end: 51}
+  - name: q01
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1000, est_sec_per_epoch: 400}
+    config: {<<: *gaitq, frame_start: 51, frame_end: 101}
+  - name: q02
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1000, est_sec_per_epoch: 400}
+    config: {<<: *gaitq, frame_start: 101, frame_end: 151}
+  - name: q03
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 1000, est_sec_per_epoch: 400}
+    config: {<<: *gaitq, frame_start: 151, frame_end: 201}

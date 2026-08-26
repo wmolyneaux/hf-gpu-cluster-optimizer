@@ -225,6 +225,7 @@ _ARGV_SPEC = (
     ("scenic_length",   "--scenic-length",   "opt_text"),
     ("scenic_yaw",      "--scenic-yaw",      "opt_text"),
     ("subject_enters",  "--subject-enters",  "opt_text"),
+    ("locked_off_wide", "--locked-off-wide", "opt_text"),
     ("surface_smooth",  "--surface-smooth",  "opt_text"),
     ("haze",            "--haze",            "opt_text"),
     ("visibility_m",    "--visibility-m",    "opt_text"),
