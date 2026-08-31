@@ -1,0 +1,99 @@
+# Kimodo text-to-motion — two HETEROGENEOUS clips, as a showcase that the lane
+# reaches a pixel. Written 2026-08-30.
+#
+# WHY TWO CONTRASTING CLIPS: the standing complaint on this pipeline since
+# 2026-08-19 is "he just looks like jesus christ running with his arms stiff".
+# The recorded cause is that the depth guide CANNOT carry articulation (hero
+# interior std 2.7-4.0 code values out of ~200; an arm 10 cm in front of the
+# torso is 1-2 code values), and that the character INVENTS the gait regardless.
+# The recorded conclusion was that the fix moves UPSTREAM TO THE TAKE.
+#
+# Both clips below are chosen for large, unambiguous ARM motion, because that is
+# the axis the conditioning channels provably cannot express. If the arms swing
+# in the retargeted take, the upstream fix is real.
+#
+# COST: this lane is CPU-viable. The 282M denoiser is trivial; the ~17 GB figure
+# is the LLM2Vec/Llama-3-8B text encoder, which TEXT_ENCODER_DEVICE=cpu drops to
+# <3 GB. Encode once per action string and cache — see the lane docstring.
+
+run_id: kimodo_heterogeneous
+
+runs:
+  - name: kimodo_two_clip
+    type: kimodo_motion
+    seed: 7
+    device: auto
+
+    # A10G ($1.10/h), NOT H100. The denoiser is 282M; TEXT_ENCODER_DEVICE=cpu keeps
+    # the 8B encoder off the GPU. BILL_SAFETY: the lane timeout IS the worst-case
+    # bill -- short = 1800 s = $0.55 worst case on A10G.
+    #
+    # `short` and not `brief` FOR THIS FIRST RUN ONLY: the HF cache volume is cold,
+    # so a ~16 GB Llama pull precedes generation. Once that lands on the shared
+    # volume, drop max_runtime_sec to 600 and this routes to `brief` ($0.18).
+    modal: {gpu: A10G, max_runtime_sec: 1800, est_sec_per_epoch: 420}
+
+    config:
+      model: kimodo-smplx-rp
+
+      # Text encoding on CPU keeps the 8B off the GPU. Slower, but this is a
+      # one-time cost per ACTION STRING and the embedding is cacheable.
+      text_encoder_device: cpu
+
+      # ---------------------------------------------------------------------
+      # THE PROMPT-PROVENANCE CONTRACT
+      # ---------------------------------------------------------------------
+      # `style_card_action`, when set, MUST equal every clip's `action` string
+      # exactly. The lane REFUSES otherwise (KimodoError: ACTION DESYNC).
+      #
+      # This is not tidiness. The champion RELEASES the hero from the guide
+      # (mask ~0.30) and routes the action span to hero_cov at
+      # elaborate_in 1.0 / elaborate_out 0.53. In that region THE WORDS WIN.
+      # If Kimodo generates a spinning kick while the style card still says
+      # "walking", the stylizer paints a walk over kicking geometry — and the
+      # artifact reads as a stylizer defect rather than a prompt desync.
+      #
+      # One action string, authored once, used twice: once to generate the
+      # motion, once to compose the LTX prompt via prompts/build_prompts.py
+      # (settled `no-hand-written-prompt` — never hand-write the LTX prompt).
+      #
+      # LEFT NULL HERE ON PURPOSE: these two clips are a capability showcase,
+      # not a shot, so no style card governs them yet. Set BOTH style_card_md5
+      # and style_card_action before any clip is promoted toward a take, or the
+      # binding is unenforced.
+      style_card_md5: null
+      style_card_action: null
+
+      # STALENESS WARNING for whoever wires this to a shot: changing an action
+      # string moves the measured token span. sbschampA80_action is [336,387]
+      # measured against google/gemma-4-12b-it on prompt_golden_sbs.txt at
+      # text_len 733. New action text -> new card md5 -> new prompt md5 ->
+      # build_specs.py MUST re-run and the routing spec MUST be regenerated.
+      # A stale spec routes the WRONG TOKENS to hero_cov, silently, at full
+      # strength (cf. settled `stale-derived-artifact`).
+
+      clips:
+        - name: dance
+          action: "an energetic hip hop dance with big swinging arm movements and a spin"
+          duration_s: 3.5     # 105 frames @ 30 fps, inside the 300-frame ceiling
+          seed: 7
+
+        - name: combat
+          action: "a running jump into a forward roll, springing up into a fighting stance with fists raised"
+          duration_s: 3.5
+          seed: 11
+
+# ---------------------------------------------------------------------------
+# WHAT THIS DOES NOT DO
+# ---------------------------------------------------------------------------
+# It generates and retargets. It does NOT render a take and does NOT stylize —
+# those are separate, PAID Modal steps and are deliberately not chained here.
+# Judge the motion at $0 first; a take render on bad motion is money spent
+# reproducing the bug this lane exists to fix.
+#
+# The measurement that decides it: HAND DISPLACEMENT, not joint angle
+# (settled `rom-vs-displacement`), against the existing take. And the red case
+# is mandatory — generate a deliberately IDLE clip and confirm it reads
+# near-zero. If an idle scores like a walk, the metric is reading root
+# translation, which is the settled-REFUTED silhouette-metrics trap wearing a
+# new hat.

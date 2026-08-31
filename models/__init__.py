@@ -36,8 +36,13 @@ _safe_import("modallabs.models.heroshot_take")
 _safe_import("modallabs.models.longcat_avatar")
 # Lives in the separate tram-motion repo; skipped cleanly when not pip-installed.
 _safe_import("modallabs.models.tram_motion")
+# Kimodo text-to-motion (nv-tlabs); retargets onto smpl22 via tram-motion.
+_safe_import("modallabs.models.kimodo_motion")
 # Orpheus 3B voice clone; the tokenized dataset comes from the voicecraft repo.
 _safe_import("modallabs.models.orpheus_voice")
+# TRELLIS.2-4B image-to-3D for TheExperiment; heavy CUDA-extension image,
+# skipped cleanly wherever trellis2 is not installed.
+_safe_import("modallabs.models.trellis2_recon")
 _safe_import("modallabs.models.orpheus_tts")
 
 # Optional ML libs

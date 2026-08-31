@@ -1,0 +1,56 @@
+# Oski takes driven by KIMODO-generated motion. Two clips, chunked.
+#
+# PROVENANCE: motion from configs/kimodo_heterogeneous.yaml, retargeted through
+# tram-motion/retarget/smpl_to_smpl22.py UNMODIFIED (Kimodo's SMPLXSkeleton22 is
+# SMPL truncated at the wrists -- names and parents identical to SMPL24[0:22],
+# verified; identity-padding 22/23 falsified as a no-op).
+#
+# GATE: both bundles PASS author_walk_shot._pose_gate. `left_foot` was EASED, not
+# clipped -- SATURATION fired at 108.7%/104.7% of its 70 deg limit, so the joint's
+# angle was SCALED (variance preserved) to 90% of the limit. Clipping is what the
+# detector exists to catch: it writes the limit exactly, giving mean/limit 1.000.
+# The operation is recorded per-bundle in `clamp`, not hidden.
+#
+# STAGING: the two retargets were APPENDED to busd_take.tar (63 -> 65 shots entries,
+# zero originals lost, verified by set difference) rather than rebuilt through
+# stage_oski_take.sh -- that script rebuilds from "$@" and DELETES any shot not named,
+# and the 62 volume shots have NO local counterpart.
+run_id: kimodo_oski_takes_r5
+
+_dance: &dance
+  retarget: shots/kimodo_dance_oski.json
+  frames: 105
+  res: 1024x576
+  samples: 96
+  look: magical
+  npr: cel
+  npr_mix: 0.65
+  outline: "off"
+  char_key: 0.20
+  camera: bcHeroGladeCam
+  guide_passes: true
+  glb: rig/oski/rigged.glb
+  style_card: characters/oski/style.json
+  allow_fused: "kimodo motion take: RENDERED take, fused asset stated"
+
+_combat: &combat
+  <<: *dance
+  retarget: shots/kimodo_combat_oski.json
+
+runs:
+  - name: d00
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 800, est_sec_per_epoch: 300}
+    config: {<<: *dance, frame_start: 0, frame_end: 53}
+  - name: d01
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 800, est_sec_per_epoch: 300}
+    config: {<<: *dance, frame_start: 53, frame_end: 105}
+  - name: c00
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 800, est_sec_per_epoch: 300}
+    config: {<<: *combat, frame_start: 0, frame_end: 53}
+  - name: c01
+    type: heroshot_take
+    modal: {gpu: A10G, max_runtime_sec: 800, est_sec_per_epoch: 300}
+    config: {<<: *combat, frame_start: 53, frame_end: 105}

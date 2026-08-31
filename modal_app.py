@@ -115,7 +115,7 @@ _REMOTE_GPU = "H100"
 # lane which failed to declare becomes a loud refusal in main() instead of a silent
 # dispatch to the generic training image.
 _TYPED_LANES_REQUIRED = frozenset({"wan_vace_shot", "longcat_avatar", "tram_motion",
-                                   "heroshot_take"})
+                                   "heroshot_take", "trellis2_recon", "kimodo_motion"})
 _LANES: Dict[str, int] = {
     # 10 min - short measured jobs. Added 2026-08-11 off MEASURED runtimes, not a guess:
     # an orpheus_voice 3-epoch LoRA train is 217s and an orpheus_tts 4-clip generation is
@@ -1138,10 +1138,256 @@ if _HAS_MODAL:
     # Routed on the run's own type, not on its timeout: these lanes differ by
     # IMAGE and by VOLUME, which _lane_for cannot see. A single explicit key,
     # never a heuristic.
+    # ---- TRELLIS.2-4B image-to-3D (TheExperiment) --------------------------
+    #
+    # Its own image because the upstream setup.sh compiles SIX CUDA extensions
+    # (flash-attn, nvdiffrast, nvdiffrec, cumesh, o-voxel, flexgemm) against a
+    # pinned CUDA 12.4 / torch 2.6.0 toolchain. THE BUILD IS THE RISK IN THIS
+    # LANE, NOT THE INFERENCE: measured upstream generation on H100 is ~3 s at
+    # 512^3, ~17 s at 1024^3, ~60 s at 1536^3, so the container is dominated by
+    # hydration and the 4B weight load, which is why weights get a volume.
+    #
+    # UNPROVEN AT TIME OF WRITING: this image has never been built. setup.sh is
+    # invoked WITHOUT --new-env (we are not creating a conda env inside a Modal
+    # image); if it hard-depends on conda the build fails loudly here, which is
+    # the correct outcome -- not a silent fallback to a partial install.
+    # ---- TRELLIS.2-4B image-to-3D (TheExperiment) --------------------------
+    #
+    # PORTED FROM THE PROVEN RECIPE at ~/furni/trellis/modal_app.py, which has
+    # served TRELLIS-1 since 2026-07-30. TRELLIS.2 is a different codebase (Dec
+    # 2025, six CUDA extensions, three built from source) but every structural
+    # lesson in that file applies, and ignoring them cost six failed builds here:
+    #
+    #  1. LAYER ORDER: cheap CPU layers first, so a failure in the expensive GPU
+    #     layer never re-runs them. Each attempt below re-ran the whole compile
+    #     because it was one monolithic step.
+    #  2. `bash -lc`, never a bare string: Modal runs run_commands under /bin/sh
+    #     (dash), and POSIX `.` takes a FILENAME ONLY, silently discarding
+    #     `--basic --flash-attn ...`. setup.sh printed its usage and exited 0.
+    #  3. BUILD GPU == SERVE GPU. Their note, verbatim: "building on one arch and
+    #     serving on another is how you get a container that imports fine and
+    #     then dies inside the first kernel launch." H100/sm_90 both sides.
+    #  4. VERIFY IN THE BUILD, on a GPU. "Fail the BUILD, not the first request."
+    #  5. EMPTY HF_HOME IN THE LAST LAYER. Modal refuses to mount a Volume over a
+    #     non-empty directory, and HF_HOME is a build-time env, so anything that
+    #     touches it makes the runtime /weights mount fail. Not yet hit here --
+    #     read from their file, not from our own outage.
+    #
+    # MEASURED HERE, and the reason the compile carries no GPU while the import
+    # does: the GPU-less build compiled all seven CUDA objects at sm_90 and
+    # installed every wheel, then died on IMPORT --
+    #   o_voxel -> flex_gemm -> kernels.triton -> @triton_autotune at module
+    #   scope -> triton driver._create_driver
+    #   -> RuntimeError: 0 active drivers ([]). There should only be one.
+    # Triton resolves its backend when flex_gemm is IMPORTED. So: toolkit to
+    # build, driver to import. The device is attached only where it is required.
+    trellis2_image = (
+        modal.Image.from_registry(
+            "nvidia/cuda:12.4.1-devel-ubuntu22.04", add_python="3.11"
+        )
+        .env({"DEBIAN_FRONTEND": "noninteractive",
+              "PYTHONUNBUFFERED": "1",
+              # setup.sh never sets this, so it governs what nvcc emits. 9.0 is
+              # H100. Add 8.0 if this lane is ever routed to A100.
+              "TORCH_CUDA_ARCH_LIST": "9.0",
+              "MAX_JOBS": "8"})
+        .apt_install(
+            "git", "build-essential", "ninja-build", "cmake",
+            "libgl1", "libglib2.0-0", "libx11-6", "ca-certificates", "curl",
+            # clang is a LINK dependency, not a compile one. Modal's add_python
+            # ships a Python built with clang, so sysconfig reports CXX=clang++
+            # and distutils links the extension .so with it. nvcc compiled all
+            # seven objects with gcc and succeeded; the link then died on
+            # `clang++: No such file or directory`, taking out o-voxel, cumesh
+            # and flex-gemm identically. The error names a compiler, so it reads
+            # as a toolchain mismatch when it is an absent binary.
+            "clang",
+        )
+        .pip_install(
+            "torch==2.6.0", "torchvision==0.21.0",
+            index_url="https://download.pytorch.org/whl/cu124",
+        )
+        # setup.sh uses --no-build-isolation, so the AMBIENT env must carry the
+        # build backend; with isolation pip provisions it itself. o-voxel died on
+        # `error: invalid command 'bdist_wheel'`, which is `wheel` missing.
+        .pip_install("wheel", "setuptools", "packaging", "ninja")
+        .run_commands(
+            "git clone -b main --recursive "
+            "https://github.com/microsoft/TRELLIS.2.git /opt/TRELLIS.2",
+            "cd /opt/TRELLIS.2 && echo TRELLIS2_BUILD_SHA && git rev-parse HEAD",
+            # setup.sh's "No supported GPU found" is a PLATFORM probe, quoted
+            # from its source: `if command -v nvidia-smi > /dev/null`. It tests
+            # that the BINARY EXISTS, never queries a device, and never sets
+            # TORCH_CUDA_ARCH_LIST. The CUDA devel base has no nvidia-smi because
+            # that ships with the DRIVER at container runtime. On the GPU layer
+            # below the real one is present; this stub only covers CPU layers.
+            "printf '#!/bin/sh\\nexit 0\\n' > /usr/local/bin/nvidia-smi "
+            "&& chmod +x /usr/local/bin/nvidia-smi",
+        )
+        # ---- the expensive layer: six CUDA extensions, no GPU needed ---------
+        .run_commands(
+            "bash -lc 'cd /opt/TRELLIS.2 && . ./setup.sh --basic --flash-attn "
+            "--nvdiffrast --nvdiffrec --cumesh --o-voxel --flexgemm'",
+        )
+        # ---- verification, GPU-gated, seconds ---------------------------------
+        # Separate layer ON PURPOSE (lesson 1): a failure here must not re-run the
+        # compile above. Two checks, not one, because they fail for unrelated
+        # reasons -- a single message already misattributed an import failure as
+        # "setup.sh built no wheels" while the wheels were the part that worked.
+        .run_commands(
+            # NOT `nvidia-smi`: the CPU layers above put a STUB at
+            # /usr/local/bin/nvidia-smi that exits 0 silently, and /usr/local/bin
+            # precedes /usr/bin, so the stub would answer and "prove" a device
+            # that may not be attached. torch asks the driver directly and cannot
+            # be satisfied by a shim.
+            "bash -lc 'python -c \"import torch; assert torch.cuda.is_available(), "
+            "\\\"NO CUDA DEVICE on the verification layer\\\"; "
+            "print(\\\"CUDA_OK\\\", torch.cuda.get_device_name(0))\"'",
+            # PRINT WHAT IS INSTALLED BEFORE ASSERTING ANYTHING. The previous
+            # version asserted `import flexgemm` and `import cumesh` -- names I
+            # guessed from the setup.sh FLAGS rather than read from the code. The
+            # real module is `flex_gemm`, visible in attempt 7's own traceback
+            # (o_voxel/postprocess.py line 9: `from flex_gemm.ops.grid_sample
+            # import grid_sample_3d`). A guessed name turns a working install
+            # into ModuleNotFoundError and reads as a build failure.
+            "bash -lc 'pip list --format=freeze | grep -iE \"voxel|gemm|mesh|nvdiff|flash\" "
+            "|| true'",
+            # o_voxel transitively imports flex_gemm, so this one line proves
+            # both, and it is the module to_glb() is actually reached through.
+            "bash -lc 'python -c \"import o_voxel, flex_gemm; "
+            "print(\\\"EXTENSIONS_IMPORT_OK\\\")\"'",
+            # trellis2 itself is NEVER pip-installed: setup.sh installs deps and
+            # extensions, and the package is a source tree upstream runs from its
+            # own directory. PYTHONPATH is set for the container by .env() below,
+            # but .env() applies to LATER steps, so it must be inline here.
+            "bash -lc 'cd /opt/TRELLIS.2 && python -c \"from trellis2.pipelines "
+            "import Trellis2ImageTo3DPipeline; print(\\\"FULL_IMPORT_OK\\\")\"'",
+            gpu=_REMOTE_GPU,
+        )
+        .pip_install("pyyaml", "pillow", "trimesh")
+        .env({"PYTHONPATH": "/opt/TRELLIS.2",
+              "HF_HOME": "/weights",
+              "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"})
+        # LAST, and deliberately so (lesson 5): Modal will not mount the weights
+        # Volume over a non-empty /weights, and HF_HOME above is a build env.
+        .run_commands("rm -rf /weights && mkdir -p /weights")
+        .add_local_python_source("modallabs")
+    )
+    # create_if_missing=False for views ON PURPOSE, same rule as every other
+    # staged volume: a typo must fail at launch, not mount an empty volume that
+    # the trainer then reconstructs as nothing on a hot H100. Stage it first:
+    #   scripts/stage_theexperiment_views.sh
+    trellis2_views_volume = modal.Volume.from_name(
+        "theexperiment-views", create_if_missing=False)
+    # Weights DO get create_if_missing: the 4B download is idempotent and paid
+    # once, and an empty weights volume self-heals on the first run.
+    trellis2_weights_volume = modal.Volume.from_name(
+        "trellis2-weights", create_if_missing=True)
+
+    # TRELLIS.2's image conditioning encoder is DINOv3
+    # (facebook/dinov3-vitl16-pretrain-lvd1689m), which is a GATED HuggingFace
+    # repo. Without a token the pipeline dies at from_pretrained with a 401
+    # GatedRepoError AFTER the container is hot -- measured 185.4 s of H100
+    # before it raised. The Secret already exists (credentials.py:43, carrying
+    # HF_TOKEN) and is used by other lanes; it was simply never mounted here.
+    #
+    # A TOKEN IS NECESSARY AND NOT SUFFICIENT. Gating is per-account access, so
+    # the account behind the token must ALSO have accepted the model's terms at
+    # huggingface.co. If it has not, this mount changes the error text and
+    # nothing else.
+    _trellis2_hf = modal.Secret.from_name("huggingface-secret")
+
+    _TRELLIS2_COMMON = dict(
+        image=trellis2_image,
+        gpu=_REMOTE_GPU,          # H100. >=24 GB is the upstream floor.
+        secrets=[_trellis2_hf],
+        volumes={"/runs": runs_volume,
+                 "/views": trellis2_views_volume,
+                 "/weights": trellis2_weights_volume},
+    )
+
+    @app.function(timeout=_LANES["short"], **_TRELLIS2_COMMON)
+    def _remote_trellis2(run_cfg: dict, run_id: str, resume: bool) -> dict:
+        """30-min TRELLIS.2 lane. One weight load, N arms -- the load dominates,
+        so arms that share it are nearly free. Worst case $2.75 at the table."""
+        return _remote_body(run_cfg, run_id, resume, _LANES["short"])
+
+    @app.function(timeout=_LANES["medium"], **_TRELLIS2_COMMON)
+    def _remote_trellis2_medium(run_cfg: dict, run_id: str, resume: bool) -> dict:
+        """90-min TRELLIS.2 lane, for a 1536^3 sweep across several view sets.
+        BILL_SAFETY: the timeout IS the worst-case bill -- $8.25 here."""
+        return _remote_body(run_cfg, run_id, resume, _LANES["medium"])
+
+    # ------------------------------------------------------------ Kimodo lane
+    # Kimodo text-to-motion (nv-tlabs, Apache-2.0 code). Separate image: the
+    # training image carries neither kimodo nor the LLM2Vec stack.
+    #
+    # A10G, NOT H100, deliberately. The denoiser is 282M parameters; the only heavy
+    # component is the LLM2Vec/Llama-3-8B text encoder, and TEXT_ENCODER_DEVICE=cpu
+    # keeps that off the GPU entirely (<3 GB). BILL_SAFETY: the lane timeout IS the
+    # worst-case bill, so H100 would price a two-clip generation like a training run.
+    # A10G brief = $0.18 worst case at the table rate; H100 brief would be ~5x that.
+    #
+    # The 16 GB Llama pull lands on the SHARED HF CACHE VOLUME, so it is paid once
+    # across every future run rather than per launch.
+    kimodo_image = (
+        modal.Image.debian_slim(python_version="3.11")
+        # cmake + a C++ toolchain are for MotionCorrection, which is a CMake
+        # EXTENSION (its setup.py raises "CMake must be installed to build this
+        # package"). debian_slim carries neither.
+        .apt_install("git", "cmake", "build-essential")
+        .pip_install("torch", "huggingface_hub", "hf_transfer")
+        .run_commands(
+            "git clone --depth 1 https://github.com/nv-tlabs/kimodo.git /kimodo",
+            # `pip install -e .` FAILS to build upstream (MEASURED 2026-08-30 locally).
+            # Install the declared dependency list and run from source on PYTHONPATH.
+            "pip install hydra-core omegaconf 'numpy>=1.23' scipy 'transformers==5.1.0' "
+            "'peft>=0.18' einops tqdm pydantic filelock trimesh pillow bvhio safetensors boto3",
+            # MotionCorrection ships INSIDE the repo as its own package and the
+            # default postprocess path REQUIRES it -- measured 2026-08-30, a run
+            # reached postprocess and died with "the motion_correction package is
+            # not installed". It is what cleans foot skating, which Kimodo names as
+            # a stated limitation, so install it rather than passing --no-postprocess.
+            # NOT `-e`: the editable path fails to build for BOTH upstream packages
+            # (measured locally 2026-08-30 for the root package, and on the Modal
+            # builder for this one). A plain install works and is what we want in an
+            # image anyway -- nothing here is being edited in place.
+            "pip install /kimodo/MotionCorrection",
+        )
+        .env({
+            "PYTHONPATH": "/kimodo",
+            "HF_HOME": _HF_CACHE_MOUNT,
+            "TEXT_ENCODER_DEVICE": "cpu",
+        })
+        .add_local_python_source("modallabs")
+    )
+
+    _KIMODO_COMMON = dict(
+        image=kimodo_image,
+        gpu="A10G",
+        secrets=[modal.Secret.from_name(_creds.HF_SECRET_NAME)],
+        volumes={"/runs": runs_volume, _HF_CACHE_MOUNT: hf_cache_volume},
+    )
+
+    @app.function(timeout=_LANES["brief"], **_KIMODO_COMMON)
+    def _remote_kimodo_brief(run_cfg: dict, run_id: str, resume: bool) -> dict:
+        """10-min Kimodo lane, A10G. Worst case $0.18 at the A10G table rate.
+        Generation is seconds; the cold cost is the one-time Llama pull onto the
+        shared HF cache volume."""
+        return _remote_body(run_cfg, run_id, resume, _LANES["brief"])
+
+    @app.function(timeout=_LANES["short"], **_KIMODO_COMMON)
+    def _remote_kimodo_short(run_cfg: dict, run_id: str, resume: bool) -> dict:
+        """30-min Kimodo lane, A10G, for a cold cache or a long multi-clip batch.
+        Worst case $0.55."""
+        return _remote_body(run_cfg, run_id, resume, _LANES["short"])
+
     _TYPE_LANE_FNS = {
         "wan_vace_shot": _remote_wan,
         "longcat_avatar": _remote_longcat,
         "heroshot_take": _remote_heroshot,
+        "trellis2_recon": _remote_trellis2,
+        "kimodo_motion": _remote_kimodo_brief,
     }
     # (type, lane) -> fn, consulted BEFORE _TYPE_LANE_FNS. Lets a type-routed run whose
     # max_runtime_sec fits a smaller lane get a container that actually honours it, so
@@ -1152,6 +1398,10 @@ if _HAS_MODAL:
         ("longcat_avatar", "medium"): _remote_longcat,
         ("heroshot_take", "brief"): _remote_heroshot_brief,
         ("heroshot_take", "short"): _remote_heroshot,
+        ("trellis2_recon", "short"): _remote_trellis2,
+        ("trellis2_recon", "medium"): _remote_trellis2_medium,
+        ("kimodo_motion", "brief"): _remote_kimodo_brief,
+        ("kimodo_motion", "short"): _remote_kimodo_short,
     }
 
     if tram_image is not None:
@@ -1298,6 +1548,33 @@ if _HAS_MODAL:
                 # every cross-worker check.
                 _heroshot_pin_run(rc)
                 routing.append((rc, lane, hfn))
+                continue
+            # kimodo_motion is A10G-PINNED at the @app.function level, so it is
+            # routed BEFORE the homogeneous-GPU check for the same reason heroshot
+            # is: its lane exists, it simply is not on _REMOTE_GPU. The pin is
+            # deliberate -- the denoiser is 282M and TEXT_ENCODER_DEVICE=cpu keeps
+            # the 8B encoder off the card, so H100 would price a two-clip
+            # generation like a training run for no gain.
+            if rtype == "kimodo_motion":
+                lane = _lane_for(_max_runtime_sec(rc))  # raises if no lane fits
+                kfn = _TYPE_LANE_FNS_BY_LANE.get((rtype, lane))
+                if kfn is None:
+                    raise RuntimeError(
+                        f"modallabs/modal: {rc.get('name')!r} asks for lane {lane!r} "
+                        f"({_max_runtime_sec(rc)}s), but kimodo_motion declares only "
+                        f"{sorted(k[1] for k in _TYPE_LANE_FNS_BY_LANE if k[0] == 'kimodo_motion')}. "
+                        "Generation is seconds; the only reason to want a longer lane "
+                        "is a COLD HF cache volume (~16 GB Llama pull). Once that is "
+                        "warm, use brief."
+                    )
+                if gpu not in ("A10G", "auto"):
+                    raise RuntimeError(
+                        f"modallabs/modal: {rc.get('name')!r} asks for gpu={gpu!r}, but "
+                        "the kimodo_motion lanes are declared A10G-only. Add a module-"
+                        "level @app.function variant deliberately -- each (gpu, timeout) "
+                        "pair is additional worst-case billing exposure."
+                    )
+                routing.append((rc, lane, kfn))
                 continue
             if gpu != _REMOTE_GPU:
                 gpu_mismatches.append({"name": rc.get("name"), "requested_gpu": gpu})
