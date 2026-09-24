@@ -115,7 +115,8 @@ _REMOTE_GPU = "H100"
 # lane which failed to declare becomes a loud refusal in main() instead of a silent
 # dispatch to the generic training image.
 _TYPED_LANES_REQUIRED = frozenset({"wan_vace_shot", "longcat_avatar", "tram_motion",
-                                   "heroshot_take", "trellis2_recon", "kimodo_motion"})
+                                   "heroshot_take", "trellis2_recon", "kimodo_motion",
+                                   "comfy_sheet"})
 _LANES: Dict[str, int] = {
     # 10 min - short measured jobs. Added 2026-08-11 off MEASURED runtimes, not a guess:
     # an orpheus_voice 3-epoch LoRA train is 217s and an orpheus_tts 4-clip generation is
@@ -1382,12 +1383,104 @@ if _HAS_MODAL:
         Worst case $0.55."""
         return _remote_body(run_cfg, run_id, resume, _LANES["short"])
 
+
+    # ---- comfy_sheet: ComfyUI reference sheets on an H100 ----------------------------------
+    #
+    # One weight load, N arms. Krea2 int8 is 12,866 MB resident (MEASURED on an M5) and the load
+    # dominates the container, so arms that share it are nearly free -- trellis2_recon's argument,
+    # applied. 105 sheets as 105 containers pays that load 105 times.
+    comfy_sheet_image = (
+        modal.Image.debian_slim(python_version="3.12")
+        .apt_install("git", "libgl1", "libglib2.0-0", "ffmpeg")
+        .run_commands(
+            # TORCH VERSION IS LOAD-BEARING, and pinning the cu124 index was a MEASURED mistake.
+            # That index tops out well below what ComfyUI needs, and the build died in
+            # comfy_kitchen/backends/eager/na.py: torch.library.custom_op could not infer a schema
+            # for `kernel_size: list[int]`, because older torch.library only accepts typing.List.
+            # The local M5 that DOES run this stack has torch 2.14.0, which pip gives from the
+            # DEFAULT index -- and on Linux the default wheel is already the CUDA build, so naming
+            # an index bought nothing and cost the build. No index pin.
+            #
+            # It is still not the CPU wheel: a CPU ComfyUI starts happily and samples at a rate
+            # indistinguishable from a hang, which is a failure mode that bills for an hour, so the
+            # build asserts CUDA is compiled in below.
+            "pip install --upgrade pip",
+            "pip install torch torchvision",
+            "python -c \"import torch; print('TORCH', torch.__version__);"
+            " assert torch.version.cuda, 'CPU-only torch wheel: this would sample at a rate that"
+            " looks like a hang while billing'; print('CUDA', torch.version.cuda)\"",
+            "git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git /opt/ComfyUI",
+            "pip install -r /opt/ComfyUI/requirements.txt",
+            "git clone --depth 1 https://github.com/ethanfel/ComfyUI-Krea2TextEncoder.git "
+            "/opt/ComfyUI/custom_nodes/ComfyUI-Krea2TextEncoder",
+            "pip install --upgrade gguf",
+        )
+        # BUILD-TIME PROOF that the custom node actually REGISTERS, and that init_extra_nodes
+        # really ran. The check is a FILE (lanes/verify_nodes.py) rather than an inline python -c:
+        # the inline form needed four levels of shell and Python quote escaping, and one build
+        # failure was partly the quoting hiding a real fault. See that file for both measured
+        # failures it guards.
+        #
+        # gpu=_REMOTE_GPU is NOT optional. Modal builds on CPU, and ComfyUI's init_extra_nodes()
+        # initialises model management, which probes CUDA and raises "Found no NVIDIA driver"
+        # before a single node registers. The trellis2 image carries gpu= on its own verification
+        # step for exactly this reason -- the pattern was already in the repo, and reading it was
+        # not the same as applying it. The build pays seconds of GPU to prove the container is
+        # sound before a 24 GB weight pull and a queued batch.
+        .add_local_file('/Users/molyneaux/Game1AssetPipeline/lanes/verify_nodes.py', "/opt/verify_nodes.py", copy=True)
+        .run_commands("python /opt/verify_nodes.py", gpu=_REMOTE_GPU)
+        # Reference plates -> ComfyUI's input folder. A graph that wires LoadImage to a plate the
+        # container does not have is refused by preflight before a sampler step, which is correct
+        # and also useless if the plate is simply never shipped. Baked into the image so the set
+        # is versioned with the code that references it.
+        .add_local_dir('/Users/molyneaux/Game1AssetPipeline/reference_targets', "/opt/ComfyUI/input", copy=True)
+        .pip_install("huggingface_hub", "pyyaml")
+        .env({"COMFY_ROOT": "/opt/ComfyUI",
+              "COMFY_WEIGHTS": "/comfy_weights",
+              "HF_HOME": "/comfy_weights/hf",
+              "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"})
+        # LAST, and deliberately so -- the same lesson the trellis2 image records: Modal will not
+        # mount a Volume over a non-empty directory, and HF_HOME above is a BUILD env that creates
+        # one.
+        .run_commands("rm -rf /comfy_weights && mkdir -p /comfy_weights")
+        .add_local_python_source("modallabs")
+    )
+
+    # create_if_missing=True: a weights cache is idempotent and self-heals on the first run, unlike
+    # a staged INPUT volume (theexperiment-views) where a typo must fail at launch rather than
+    # mount empty on a hot GPU.
+    comfy_weights_volume = modal.Volume.from_name("game1-comfy-weights", create_if_missing=True)
+
+    _comfy_hf = modal.Secret.from_name("huggingface-secret")
+
+    _COMFY_SHEET_COMMON = dict(
+        image=comfy_sheet_image,
+        gpu=_REMOTE_GPU,               # H100. The model is 12.9 GB; 24 GB would also fit, and
+                                       # whether a smaller card is CHEAPER per sheet is unmeasured
+                                       # -- see configs/krea2_sheet_probe.yaml, which refuses to
+                                       # copy the heroshot A10G conclusion across from a raytracer.
+        secrets=[_comfy_hf],
+        volumes={"/runs": runs_volume, "/comfy_weights": comfy_weights_volume},
+    )
+
+    @app.function(timeout=_LANES["short"], **_COMFY_SHEET_COMMON)
+    def _remote_comfy_sheet(run_cfg: dict, run_id: str, resume: bool) -> dict:
+        """30-min sheet lane. Worst case $1.97 on the verified $0.001097/s rate."""
+        return _remote_body(run_cfg, run_id, resume, _LANES["short"])
+
+    @app.function(timeout=_LANES["medium"], **_COMFY_SHEET_COMMON)
+    def _remote_comfy_sheet_medium(run_cfg: dict, run_id: str, resume: bool) -> dict:
+        """90-min sheet lane: the FIRST run, which pays a 24 GB weight pull before it samples.
+        BILL_SAFETY: the timeout IS the worst-case bill -- $5.92 here."""
+        return _remote_body(run_cfg, run_id, resume, _LANES["medium"])
+
     _TYPE_LANE_FNS = {
         "wan_vace_shot": _remote_wan,
         "longcat_avatar": _remote_longcat,
         "heroshot_take": _remote_heroshot,
         "trellis2_recon": _remote_trellis2,
         "kimodo_motion": _remote_kimodo_brief,
+        "comfy_sheet": _remote_comfy_sheet,
     }
     # (type, lane) -> fn, consulted BEFORE _TYPE_LANE_FNS. Lets a type-routed run whose
     # max_runtime_sec fits a smaller lane get a container that actually honours it, so
@@ -1402,6 +1495,8 @@ if _HAS_MODAL:
         ("trellis2_recon", "medium"): _remote_trellis2_medium,
         ("kimodo_motion", "brief"): _remote_kimodo_brief,
         ("kimodo_motion", "short"): _remote_kimodo_short,
+        ("comfy_sheet", "short"): _remote_comfy_sheet,
+        ("comfy_sheet", "medium"): _remote_comfy_sheet_medium,
     }
 
     if tram_image is not None:

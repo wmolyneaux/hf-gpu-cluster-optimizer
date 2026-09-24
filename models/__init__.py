@@ -52,3 +52,4 @@ _safe_import("modallabs.models.catboost")
 
 # HuggingFace transformers (heavy import; do last)
 _safe_import("modallabs.models.hf_transformer")
+_safe_import("modallabs.models.comfy_sheet")
