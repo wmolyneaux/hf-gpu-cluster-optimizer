@@ -1,0 +1,172 @@
+# game1CreatureMesh dummy attack: the trained categorical locomotion net (train_side_r3 best, 12% root assist) on the corrected strike
+# (strike_reach: striking side + head clearance). Profile camera. Four 43-frame windows, one L4 each (blender_script lane).
+# COST (budget-run, before launch): the pilot measured 2.0 s/frame + ~20 s setup on an L4 = ~106 s per window;
+# 4 x 106 s at $0.7992/h = ~$0.09 GPU line, ~$0.12 settled. WORST CASE 4 x 600 s = $0.53.
+
+run_id: g1cm_dummy_attack_side_trained
+
+runs:
+- name: side_trained_001_043
+  type: blender_script
+  modal:
+    gpu: L4
+    max_runtime_sec: 600
+    est_sec_per_epoch: 150
+  config:
+    bundle: game1creaturemesh/dummy_attack_side_trained.tar
+    script: creature3d/render/blender_anim.py
+    args:
+    - --run
+    - runs/dummy_attack/render/side_trained_relax
+    - --out
+    - out
+    - --name
+    - side_trained
+    - --textured_glb
+    - runs/revenant/assets/REVENANT_CHIBI_body.glb
+    - --engine
+    - cycles
+    - --samples
+    - '32'
+    - --png
+    - --res
+    - '1280'
+    - --ground
+    - '14'
+    - --checker_m
+    - '0.5'
+    - --view
+    - right
+    - --no-lines
+    - --smooth
+    - --zoom
+    - '0.8'
+    - --frame_motion
+    frames:
+    - 1
+    - 43
+    out_rel: out
+    expect_glob: side_trained_*.png
+- name: side_trained_044_086
+  type: blender_script
+  modal:
+    gpu: L4
+    max_runtime_sec: 600
+    est_sec_per_epoch: 150
+  config:
+    bundle: game1creaturemesh/dummy_attack_side_trained.tar
+    script: creature3d/render/blender_anim.py
+    args:
+    - --run
+    - runs/dummy_attack/render/side_trained_relax
+    - --out
+    - out
+    - --name
+    - side_trained
+    - --textured_glb
+    - runs/revenant/assets/REVENANT_CHIBI_body.glb
+    - --engine
+    - cycles
+    - --samples
+    - '32'
+    - --png
+    - --res
+    - '1280'
+    - --ground
+    - '14'
+    - --checker_m
+    - '0.5'
+    - --view
+    - right
+    - --no-lines
+    - --smooth
+    - --zoom
+    - '0.8'
+    - --frame_motion
+    frames:
+    - 44
+    - 86
+    out_rel: out
+    expect_glob: side_trained_*.png
+- name: side_trained_087_129
+  type: blender_script
+  modal:
+    gpu: L4
+    max_runtime_sec: 600
+    est_sec_per_epoch: 150
+  config:
+    bundle: game1creaturemesh/dummy_attack_side_trained.tar
+    script: creature3d/render/blender_anim.py
+    args:
+    - --run
+    - runs/dummy_attack/render/side_trained_relax
+    - --out
+    - out
+    - --name
+    - side_trained
+    - --textured_glb
+    - runs/revenant/assets/REVENANT_CHIBI_body.glb
+    - --engine
+    - cycles
+    - --samples
+    - '32'
+    - --png
+    - --res
+    - '1280'
+    - --ground
+    - '14'
+    - --checker_m
+    - '0.5'
+    - --view
+    - right
+    - --no-lines
+    - --smooth
+    - --zoom
+    - '0.8'
+    - --frame_motion
+    frames:
+    - 87
+    - 129
+    out_rel: out
+    expect_glob: side_trained_*.png
+- name: side_trained_130_172
+  type: blender_script
+  modal:
+    gpu: L4
+    max_runtime_sec: 600
+    est_sec_per_epoch: 150
+  config:
+    bundle: game1creaturemesh/dummy_attack_side_trained.tar
+    script: creature3d/render/blender_anim.py
+    args:
+    - --run
+    - runs/dummy_attack/render/side_trained_relax
+    - --out
+    - out
+    - --name
+    - side_trained
+    - --textured_glb
+    - runs/revenant/assets/REVENANT_CHIBI_body.glb
+    - --engine
+    - cycles
+    - --samples
+    - '32'
+    - --png
+    - --res
+    - '1280'
+    - --ground
+    - '14'
+    - --checker_m
+    - '0.5'
+    - --view
+    - right
+    - --no-lines
+    - --smooth
+    - --zoom
+    - '0.8'
+    - --frame_motion
+    frames:
+    - 130
+    - 172
+    out_rel: out
+    expect_glob: side_trained_*.png

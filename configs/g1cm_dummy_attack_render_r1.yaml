@@ -1,0 +1,341 @@
+# game1CreatureMesh dummy attack, render r1 (2026-09-24): the revenant approaching a training dummy and hammering it,
+# generation 0 (the Kimodo SOMA prior tracked in MuJoCo, fully assisted) vs the trained categorical locomotion net
+# (run train_abs00, best of the 25%-assist phase). The skin is the asset's own GLB baked from the simulated bones
+# (pose_bake.py, helpers) and relaxed per frame (47 mm, fix 2 at game scale); blender_anim.py renders it with Cycles.
+# Four 43-frame windows per clip, one L4 container each (models/blender_script.py; the bundle is staged on the volume).
+#
+# COST (budget-run, before launch): L4 at $0.7992/h (memory modal-billing-state; this harness's table says $0.50/h, so
+# its dry-run under-prices L4 by ~37%). Expected ~2.5 min per window = 20 container-min = ~$0.27 GPU line, ~$0.35
+# settled. WORST CASE every window hits the 600 s brief timeout: 8 x 600 s = $1.07 at $0.7992/h.
+
+run_id: g1cm_dummy_attack_render_r1
+
+runs:
+- name: abs00_prior_001_043
+  type: blender_script
+  modal:
+    gpu: L4
+    max_runtime_sec: 600
+    est_sec_per_epoch: 240
+  config:
+    bundle: game1creaturemesh/dummy_attack_r1.tar
+    script: creature3d/render/blender_anim.py
+    args:
+    - --run
+    - runs/dummy_attack/render/abs00_prior_relax
+    - --out
+    - out
+    - --name
+    - abs00_prior
+    - --textured_glb
+    - runs/revenant/assets/REVENANT_CHIBI_body.glb
+    - --engine
+    - cycles
+    - --samples
+    - '32'
+    - --png
+    - --res
+    - '1280'
+    - --ground
+    - '14'
+    - --checker_m
+    - '0.5'
+    - --view
+    - right
+    - --no-lines
+    - --smooth
+    - --zoom
+    - '0.8'
+    - --frame_motion
+    frames:
+    - 1
+    - 43
+    out_rel: out
+    expect_glob: abs00_prior_*.png
+- name: abs00_prior_044_086
+  type: blender_script
+  modal:
+    gpu: L4
+    max_runtime_sec: 600
+    est_sec_per_epoch: 240
+  config:
+    bundle: game1creaturemesh/dummy_attack_r1.tar
+    script: creature3d/render/blender_anim.py
+    args:
+    - --run
+    - runs/dummy_attack/render/abs00_prior_relax
+    - --out
+    - out
+    - --name
+    - abs00_prior
+    - --textured_glb
+    - runs/revenant/assets/REVENANT_CHIBI_body.glb
+    - --engine
+    - cycles
+    - --samples
+    - '32'
+    - --png
+    - --res
+    - '1280'
+    - --ground
+    - '14'
+    - --checker_m
+    - '0.5'
+    - --view
+    - right
+    - --no-lines
+    - --smooth
+    - --zoom
+    - '0.8'
+    - --frame_motion
+    frames:
+    - 44
+    - 86
+    out_rel: out
+    expect_glob: abs00_prior_*.png
+- name: abs00_prior_087_129
+  type: blender_script
+  modal:
+    gpu: L4
+    max_runtime_sec: 600
+    est_sec_per_epoch: 240
+  config:
+    bundle: game1creaturemesh/dummy_attack_r1.tar
+    script: creature3d/render/blender_anim.py
+    args:
+    - --run
+    - runs/dummy_attack/render/abs00_prior_relax
+    - --out
+    - out
+    - --name
+    - abs00_prior
+    - --textured_glb
+    - runs/revenant/assets/REVENANT_CHIBI_body.glb
+    - --engine
+    - cycles
+    - --samples
+    - '32'
+    - --png
+    - --res
+    - '1280'
+    - --ground
+    - '14'
+    - --checker_m
+    - '0.5'
+    - --view
+    - right
+    - --no-lines
+    - --smooth
+    - --zoom
+    - '0.8'
+    - --frame_motion
+    frames:
+    - 87
+    - 129
+    out_rel: out
+    expect_glob: abs00_prior_*.png
+- name: abs00_prior_130_172
+  type: blender_script
+  modal:
+    gpu: L4
+    max_runtime_sec: 600
+    est_sec_per_epoch: 240
+  config:
+    bundle: game1creaturemesh/dummy_attack_r1.tar
+    script: creature3d/render/blender_anim.py
+    args:
+    - --run
+    - runs/dummy_attack/render/abs00_prior_relax
+    - --out
+    - out
+    - --name
+    - abs00_prior
+    - --textured_glb
+    - runs/revenant/assets/REVENANT_CHIBI_body.glb
+    - --engine
+    - cycles
+    - --samples
+    - '32'
+    - --png
+    - --res
+    - '1280'
+    - --ground
+    - '14'
+    - --checker_m
+    - '0.5'
+    - --view
+    - right
+    - --no-lines
+    - --smooth
+    - --zoom
+    - '0.8'
+    - --frame_motion
+    frames:
+    - 130
+    - 172
+    out_rel: out
+    expect_glob: abs00_prior_*.png
+- name: abs00_trained_001_043
+  type: blender_script
+  modal:
+    gpu: L4
+    max_runtime_sec: 600
+    est_sec_per_epoch: 240
+  config:
+    bundle: game1creaturemesh/dummy_attack_r1.tar
+    script: creature3d/render/blender_anim.py
+    args:
+    - --run
+    - runs/dummy_attack/render/abs00_phase2_relax
+    - --out
+    - out
+    - --name
+    - abs00_trained
+    - --textured_glb
+    - runs/revenant/assets/REVENANT_CHIBI_body.glb
+    - --engine
+    - cycles
+    - --samples
+    - '32'
+    - --png
+    - --res
+    - '1280'
+    - --ground
+    - '14'
+    - --checker_m
+    - '0.5'
+    - --view
+    - right
+    - --no-lines
+    - --smooth
+    - --zoom
+    - '0.8'
+    - --frame_motion
+    frames:
+    - 1
+    - 43
+    out_rel: out
+    expect_glob: abs00_trained_*.png
+- name: abs00_trained_044_086
+  type: blender_script
+  modal:
+    gpu: L4
+    max_runtime_sec: 600
+    est_sec_per_epoch: 240
+  config:
+    bundle: game1creaturemesh/dummy_attack_r1.tar
+    script: creature3d/render/blender_anim.py
+    args:
+    - --run
+    - runs/dummy_attack/render/abs00_phase2_relax
+    - --out
+    - out
+    - --name
+    - abs00_trained
+    - --textured_glb
+    - runs/revenant/assets/REVENANT_CHIBI_body.glb
+    - --engine
+    - cycles
+    - --samples
+    - '32'
+    - --png
+    - --res
+    - '1280'
+    - --ground
+    - '14'
+    - --checker_m
+    - '0.5'
+    - --view
+    - right
+    - --no-lines
+    - --smooth
+    - --zoom
+    - '0.8'
+    - --frame_motion
+    frames:
+    - 44
+    - 86
+    out_rel: out
+    expect_glob: abs00_trained_*.png
+- name: abs00_trained_087_129
+  type: blender_script
+  modal:
+    gpu: L4
+    max_runtime_sec: 600
+    est_sec_per_epoch: 240
+  config:
+    bundle: game1creaturemesh/dummy_attack_r1.tar
+    script: creature3d/render/blender_anim.py
+    args:
+    - --run
+    - runs/dummy_attack/render/abs00_phase2_relax
+    - --out
+    - out
+    - --name
+    - abs00_trained
+    - --textured_glb
+    - runs/revenant/assets/REVENANT_CHIBI_body.glb
+    - --engine
+    - cycles
+    - --samples
+    - '32'
+    - --png
+    - --res
+    - '1280'
+    - --ground
+    - '14'
+    - --checker_m
+    - '0.5'
+    - --view
+    - right
+    - --no-lines
+    - --smooth
+    - --zoom
+    - '0.8'
+    - --frame_motion
+    frames:
+    - 87
+    - 129
+    out_rel: out
+    expect_glob: abs00_trained_*.png
+- name: abs00_trained_130_172
+  type: blender_script
+  modal:
+    gpu: L4
+    max_runtime_sec: 600
+    est_sec_per_epoch: 240
+  config:
+    bundle: game1creaturemesh/dummy_attack_r1.tar
+    script: creature3d/render/blender_anim.py
+    args:
+    - --run
+    - runs/dummy_attack/render/abs00_phase2_relax
+    - --out
+    - out
+    - --name
+    - abs00_trained
+    - --textured_glb
+    - runs/revenant/assets/REVENANT_CHIBI_body.glb
+    - --engine
+    - cycles
+    - --samples
+    - '32'
+    - --png
+    - --res
+    - '1280'
+    - --ground
+    - '14'
+    - --checker_m
+    - '0.5'
+    - --view
+    - right
+    - --no-lines
+    - --smooth
+    - --zoom
+    - '0.8'
+    - --frame_motion
+    frames:
+    - 130
+    - 172
+    out_rel: out
+    expect_glob: abs00_trained_*.png

@@ -44,6 +44,8 @@ _safe_import("modallabs.models.orpheus_voice")
 # skipped cleanly wherever trellis2 is not installed.
 _safe_import("modallabs.models.trellis2_recon")
 _safe_import("modallabs.models.orpheus_tts")
+# A repo's own Blender script on a GPU from a staged bundle (game1CreatureMesh renders); shells Blender, no bpy.
+_safe_import("modallabs.models.blender_script")
 
 # Optional ML libs
 _safe_import("modallabs.models.lightgbm")

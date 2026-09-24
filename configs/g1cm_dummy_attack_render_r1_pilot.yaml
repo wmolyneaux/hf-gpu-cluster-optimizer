@@ -1,0 +1,47 @@
+# PILOT for g1cm_dummy_attack_render_r1.yaml: one window (the strike), first ever run of the blender_script lane.
+# It must come back with 43 GPU-rendered PNGs before the other seven windows launch.
+# COST: expected ~2.5 min of L4 = ~$0.04; worst case the 600 s brief timeout = $0.13 at $0.7992/h.
+
+run_id: g1cm_dummy_attack_render_r1_pilot
+
+runs:
+- name: abs00_trained_130_172
+  type: blender_script
+  modal:
+    gpu: L4
+    max_runtime_sec: 600
+    est_sec_per_epoch: 240
+  config:
+    bundle: game1creaturemesh/dummy_attack_r1.tar
+    script: creature3d/render/blender_anim.py
+    args:
+    - --run
+    - runs/dummy_attack/render/abs00_phase2_relax
+    - --out
+    - out
+    - --name
+    - abs00_trained
+    - --textured_glb
+    - runs/revenant/assets/REVENANT_CHIBI_body.glb
+    - --engine
+    - cycles
+    - --samples
+    - '32'
+    - --png
+    - --res
+    - '1280'
+    - --ground
+    - '14'
+    - --checker_m
+    - '0.5'
+    - --view
+    - right
+    - --no-lines
+    - --smooth
+    - --label
+    - 'trained 95 generations: categorical locomotion net (root assist 25%)'
+    frames:
+    - 130
+    - 172
+    out_rel: out
+    expect_glob: abs00_trained_*.png

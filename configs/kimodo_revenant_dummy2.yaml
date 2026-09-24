@@ -1,0 +1,38 @@
+# Second teacher batch for game1CreatureMesh's dummy attack (2026-09-24). The first batch
+# (kimodo_revenant_dummy.yaml) MEASURED: the multi-prompt approach clips walk 4.5-6.5 m but their strike
+# is weak (hand at most 0.06 m above the head, ~0 m/s down at the hit); the "heavy brute smashes its right
+# fist down from above its head" phrasing gives the strongest windups (0.26-0.28 m above the head, 1.2-1.8
+# m/s down) but no travel; the one clip with both (walk_overhead_strike_00: 1.75 m, 5.9 m/s down) strikes
+# MID-walk and walks on. So: the CLI's multi-prompt form, a walk segment then the brute-smash segment.
+#
+# COST (budget-run, before launch): the first batch took 381 s for three clips (committed GPU floor
+# $0.117). Two clips: expected ~260 s = $0.08 GPU line, ~$0.11 settled; WORST CASE the `short` lane
+# timeout, $0.55 GPU line (<= $0.78 settled). Credit exhausted: bills the card.
+
+run_id: kimodo_revenant_dummy2
+
+runs:
+  - name: revenant_dummy_teacher2
+    type: kimodo_motion
+    seed: 7
+    device: auto
+    modal: {gpu: A10G, max_runtime_sec: 1800, est_sec_per_epoch: 600}
+
+    config:
+      model: Kimodo-SOMA-RP-v1.1
+      text_encoder_device: cpu
+      style_card_md5: null
+      style_card_action: null
+
+      clips:
+        - name: approach_brute_smash
+          action: "A person walks forward toward a target. A heavy brute smashes its right fist down from above its head onto the target in front of it."
+          duration_s: [3.0, 2.5]
+          num_samples: 3
+          seed: 31
+
+        - name: walk_stop_hammer
+          action: "A person walks forward five steps and stops. The person swings the right fist up above the head and smashes it down hard onto a target in front."
+          duration_s: [3.0, 2.5]
+          num_samples: 3
+          seed: 37

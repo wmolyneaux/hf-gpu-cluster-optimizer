@@ -1,0 +1,46 @@
+# PILOT 2: the profile camera, 4 frames around contact. COST ~$0.01 expected, worst $0.13 (600 s L4).
+
+run_id: g1cm_dummy_attack_render_r1_pilot2
+
+runs:
+- name: abs00_trained_134_137_cam2
+  type: blender_script
+  modal:
+    gpu: L4
+    max_runtime_sec: 600
+    est_sec_per_epoch: 240
+  config:
+    bundle: game1creaturemesh/dummy_attack_r1.tar
+    script: creature3d/render/blender_anim.py
+    args:
+    - --run
+    - runs/dummy_attack/render/abs00_phase2_relax
+    - --out
+    - out
+    - --name
+    - abs00_trained
+    - --textured_glb
+    - runs/revenant/assets/REVENANT_CHIBI_body.glb
+    - --engine
+    - cycles
+    - --samples
+    - '32'
+    - --png
+    - --res
+    - '1280'
+    - --ground
+    - '14'
+    - --checker_m
+    - '0.5'
+    - --view
+    - right
+    - --no-lines
+    - --smooth
+    - --zoom
+    - '0.8'
+    - --frame_motion
+    frames:
+    - 134
+    - 137
+    out_rel: out
+    expect_glob: abs00_trained_*.png

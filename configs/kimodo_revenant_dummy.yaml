@@ -1,0 +1,53 @@
+# Kimodo teacher clips for game1CreatureMesh's dummy attack (branch molyneaux-d1/arm-strike):
+# the revenant walks up to a training dummy and hammers it with an overhead right fist.
+# Written 2026-09-24.
+#
+# THE CHECKPOINT IS SOMA, ON PURPOSE. Will, 2026-09-24: the Kimodo teacher runs "on a perfect
+# model skeleton". Kimodo-SMPLX-RP-v1 is non-commercial research only; Kimodo-SOMA-RP-v1.1 is
+# NVIDIA Open Model License, "ready for commercial use", ungated (both read on the model cards).
+# The model runs on SOMASkeleton30; the CLI writes somaskel77 and the lane exports the 30-joint
+# teacher beside it (<name>_NN.soma30.npz + .skeleton.json, FK bind-proofed).
+#
+# THREE PHRASINGS x THREE SAMPLES: nine candidate teachers from three model loads. The consumer
+# picks one by measurement (overhead windup above the head, forward travel, planted-foot slip),
+# never by eye. The multi-prompt clip is the CLI's own segment form: one sentence per segment,
+# generated as one motion with transitions.
+#
+# COST (budget-run, stated before launch): A10G $1.1016/h. Expected ~10-15 min wall including the
+# new SOMA checkpoint pull and three CPU text-encoder passes = $0.18-0.28 GPU line; settled bills
+# run 1.30-1.42x the GPU line (CPU + memory rows), so ~$0.24-0.39. WORST CASE is the lane timeout:
+# `short` 1800 s = $0.55 GPU line, <= $0.78 settled. Credit is exhausted: this bills the card.
+
+run_id: kimodo_revenant_dummy
+
+runs:
+  - name: revenant_dummy_teacher
+    type: kimodo_motion
+    seed: 7
+    device: auto
+    modal: {gpu: A10G, max_runtime_sec: 1800, est_sec_per_epoch: 900}
+
+    config:
+      model: Kimodo-SOMA-RP-v1.1
+      text_encoder_device: cpu
+      style_card_md5: null        # no render stylizer consumes these; they are a physics teacher
+      style_card_action: null
+
+      clips:
+        - name: approach_hammerfist
+          action: "A person walks forward toward something in front of them. The person raises the right fist high overhead and hammers it straight down in front of them."
+          duration_s: [3.5, 2.0]
+          num_samples: 3
+          seed: 7
+
+        - name: walk_overhead_strike
+          action: "A person walks forward four steps and then strikes downward with a big overhead right hammer fist."
+          duration_s: 5.5
+          num_samples: 3
+          seed: 11
+
+        - name: heavy_approach_strike
+          action: "A heavy brute lumbers forward and smashes its right fist down from above its head onto a target in front of it."
+          duration_s: 5.5
+          num_samples: 3
+          seed: 23

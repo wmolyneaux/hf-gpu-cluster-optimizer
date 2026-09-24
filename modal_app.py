@@ -116,7 +116,7 @@ _REMOTE_GPU = "H100"
 # dispatch to the generic training image.
 _TYPED_LANES_REQUIRED = frozenset({"wan_vace_shot", "longcat_avatar", "tram_motion",
                                    "heroshot_take", "trellis2_recon", "kimodo_motion",
-                                   "comfy_sheet"})
+                                   "comfy_sheet", "blender_script"})
 _LANES: Dict[str, int] = {
     # 10 min - short measured jobs. Added 2026-08-11 off MEASURED runtimes, not a guess:
     # an orpheus_voice 3-epoch LoRA train is 217s and an orpheus_tts 4-clip generation is
@@ -1013,6 +1013,23 @@ if _HAS_MODAL:
         ("L4", "short"): _remote_heroshot_short_l4,
     }
 
+    # ---- blender_script: a repo's own Blender script from a staged bundle (models/blender_script.py) ----
+    # The heroshot image (Blender 4.5.12 LTS, the Mac's version; CUDA cubins shipped for sm_86/sm_89, so no JIT) on an
+    # L4, the cheapest card with shipped cubins. Added 2026-09-24 for game1CreatureMesh renders, which had been going
+    # to the local Mac GPU. BILL_SAFETY: the lane timeout IS the worst-case bill; split a long render into frame
+    # windows (one run each) rather than buying a longer lane.
+    _BLENDER_SCRIPT_COMMON = dict(image=heroshot_image, gpu="L4", volumes={"/runs": runs_volume})
+
+    @app.function(timeout=_LANES["brief"], **_BLENDER_SCRIPT_COMMON)
+    def _remote_blender_script_brief(run_cfg: dict, run_id: str, resume: bool) -> dict:
+        """10-min blender_script lane, L4: one frame window of one render."""
+        return _remote_body(run_cfg, run_id, resume, _LANES["brief"])
+
+    @app.function(timeout=_LANES["short"], **_BLENDER_SCRIPT_COMMON)
+    def _remote_blender_script_short(run_cfg: dict, run_id: str, resume: bool) -> dict:
+        """30-min blender_script lane, L4, for a window that measures too slow for brief."""
+        return _remote_body(run_cfg, run_id, resume, _LANES["short"])
+
     @app.function(timeout=_LANES["short"], **_LONGCAT_COMMON)
     def _remote_longcat_short(run_cfg: dict, run_id: str, resume: bool) -> dict:
         """30-min LongCat lane, for fanning single-job runs out concurrently.
@@ -1481,6 +1498,7 @@ if _HAS_MODAL:
         "trellis2_recon": _remote_trellis2,
         "kimodo_motion": _remote_kimodo_brief,
         "comfy_sheet": _remote_comfy_sheet,
+        "blender_script": _remote_blender_script_brief,
     }
     # (type, lane) -> fn, consulted BEFORE _TYPE_LANE_FNS. Lets a type-routed run whose
     # max_runtime_sec fits a smaller lane get a container that actually honours it, so
@@ -1497,6 +1515,8 @@ if _HAS_MODAL:
         ("kimodo_motion", "short"): _remote_kimodo_short,
         ("comfy_sheet", "short"): _remote_comfy_sheet,
         ("comfy_sheet", "medium"): _remote_comfy_sheet_medium,
+        ("blender_script", "brief"): _remote_blender_script_brief,
+        ("blender_script", "short"): _remote_blender_script_short,
     }
 
     if tram_image is not None:
@@ -1670,6 +1690,23 @@ if _HAS_MODAL:
                         "pair is additional worst-case billing exposure."
                     )
                 routing.append((rc, lane, kfn))
+                continue
+            # blender_script is L4-PINNED at the @app.function level (see its declaration), so, like kimodo_motion,
+            # it is routed before the homogeneous-GPU check.
+            if rtype == "blender_script":
+                lane = _lane_for(_max_runtime_sec(rc))  # raises if no lane fits
+                bfn = _TYPE_LANE_FNS_BY_LANE.get((rtype, lane))
+                if bfn is None:
+                    raise RuntimeError(
+                        f"modallabs/modal: {rc.get('name')!r} asks for lane {lane!r} "
+                        f"({_max_runtime_sec(rc)}s), but blender_script declares only brief and short. Split the "
+                        "render into more frame windows instead of buying a longer lane.")
+                if gpu not in ("L4", "auto"):
+                    raise RuntimeError(
+                        f"modallabs/modal: {rc.get('name')!r} asks for gpu={gpu!r}, but the blender_script lanes are "
+                        "declared L4-only. Add a module-level @app.function variant deliberately -- each "
+                        "(gpu, timeout) pair is additional worst-case billing exposure.")
+                routing.append((rc, lane, bfn))
                 continue
             if gpu != _REMOTE_GPU:
                 gpu_mismatches.append({"name": rc.get("name"), "requested_gpu": gpu})

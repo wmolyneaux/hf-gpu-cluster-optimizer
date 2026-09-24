@@ -76,12 +76,43 @@ _REQUIRED_REPOS: Tuple[Tuple[str, str], ...] = (
     ("meta-llama/Meta-Llama-3-8B-Instruct", "config.json"),
 )
 
+#: The motion checkpoint each accepted `model` name resolves to, and the skeleton its
+#: generate CLI WRITES. A name not in this table is refused: the lane must know the
+#: skeleton before it can write the sidecar honestly.
+#:   LICENCES, read on each Hugging Face model card (2026-09-23 / 2026-09-24):
+#:   Kimodo-SMPLX-RP-v1 ....... "for non-commercial research use only"
+#:   Kimodo-SOMA-RP-v1, v1.1 .. NVIDIA Open Model License, "ready for commercial use"; ungated
+#:   SOMA OUTPUT: the model runs on SOMASkeleton30, but kimodo_model.py converts its output to
+#:   somaskel77 ("Convert SOMA output to somaskel77 for external API") before the CLI saves it,
+#:   so the npz carries 77 joints. The 30-joint subset is exported beside it (soma30_export).
+_MODEL_REPOS: Dict[str, Tuple[str, str, int]] = {
+    "kimodo-smplx-rp": ("nvidia/Kimodo-SMPLX-RP-v1", "SMPLXSkeleton22", 22),
+    "Kimodo-SMPLX-RP-v1": ("nvidia/Kimodo-SMPLX-RP-v1", "SMPLXSkeleton22", 22),
+    "Kimodo-SOMA-RP-v1": ("nvidia/Kimodo-SOMA-RP-v1", "somaskel77", 77),
+    "Kimodo-SOMA-RP-v1.1": ("nvidia/Kimodo-SOMA-RP-v1.1", "somaskel77", 77),
+}
+
+
+def model_repo(model: str) -> Tuple[str, str, int]:
+    """(HF repo, skeleton the CLI writes, joint count) for a `model` name, or a refusal."""
+    if model not in _MODEL_REPOS:
+        raise KimodoError(
+            f"model {model!r} is not in _MODEL_REPOS {sorted(_MODEL_REPOS)}. Add it with the "
+            "skeleton its CLI writes (read kimodo/model/kimodo_model.py) and its licence.")
+    return _MODEL_REPOS[model]
+
+
+def required_repos(model: str) -> Tuple[Tuple[str, str], ...]:
+    """The repos a run of `model` resolves: its own checkpoint plus the three text-encoder repos."""
+    return ((model_repo(model)[0], "config.yaml"),) + _REQUIRED_REPOS[1:]
+
 
 class KimodoError(RuntimeError):
     """Refusal from this lane. Always names what was expected and what was found."""
 
 
-def preflight_hf_repos(token: Optional[str] = None) -> Dict[str, str]:
+def preflight_hf_repos(token: Optional[str] = None,
+                       repos: Optional[Tuple[Tuple[str, str], ...]] = None) -> Dict[str, str]:
     """Resolve every required HF repo BEFORE any weight load. Raises on the first
     one that is unreachable.
 
@@ -100,12 +131,13 @@ def preflight_hf_repos(token: Optional[str] = None) -> Dict[str, str]:
     from huggingface_hub import HfApi, hf_hub_download
 
     tok = token or os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+    repos = _REQUIRED_REPOS if repos is None else repos
     out: Dict[str, str] = {}
     if not tok:
         raise KimodoError(
             "preflight: no HF_TOKEN in the environment. The lane must mount the "
             "`huggingface-secret` Secret (credentials.py). Repos needed: "
-            + ", ".join(r for r, _ in _REQUIRED_REPOS))
+            + ", ".join(r for r, _ in repos))
     try:
         out["whoami"] = HfApi(token=tok).whoami()["name"]
     except Exception as exc:  # noqa: BLE001
@@ -116,7 +148,7 @@ def preflight_hf_repos(token: Optional[str] = None) -> Dict[str, str]:
             "token and run: modal secret create huggingface-secret "
             "HF_TOKEN=hf_... --force") from exc
 
-    for repo, probe_file in _REQUIRED_REPOS:
+    for repo, probe_file in repos:
         try:
             hf_hub_download(repo, probe_file, token=tok)
             out[repo] = "OK"
@@ -170,6 +202,74 @@ def pad_22_to_24(rot22):
     return out
 
 
+#: SOMA hand ends: in SOMASkeleton30 their parent is the HAND, in somaskel77 it is the last
+#: finger joint (posed with the relaxed-hands rest), so their 30-joint FK legitimately differs.
+_SOMA30_HAND_ENDS = ("LeftHandThumbEnd", "LeftHandMiddleEnd", "RightHandThumbEnd", "RightHandMiddleEnd")
+
+
+def soma30_export(npz77: Path, stem: Path) -> Dict[str, Any]:
+    """Write the 30-joint SOMA teacher beside a somaskel77 clip, with its skeleton definition.
+
+    `<stem>.soma30.npz`: local_rot_mats, global_rot_mats (T,30,3,3), posed_joints (T,30,3),
+    root_positions (T,3), foot_contacts (T,4) [L_heel, L_toe, R_heel, R_toe] (the CLI's six
+    channels minus its two toe-end copies). `<stem>.skeleton.json`: names, parent indices,
+    neutral joints (metres) for somaskel30 and somaskel77, the 30-in-77 index map, and the axes
+    MEASURED from the neutral joints (never assumed).
+
+    BIND-PROOF: the 30-joint local rotations are re-run through somaskel30's own FK and compared
+    with the CLI's 77-joint posed joints at every body joint. A wrong slice or key shows as a
+    metre-scale error; the hand ends are reported apart (their chain differs, see above).
+    """
+    import numpy as np
+    import torch
+    from kimodo.skeleton import SOMASkeleton30, SOMASkeleton77
+
+    s30, s77 = SOMASkeleton30(), SOMASkeleton77()
+    sl = s30.get_skel_slice(s77)
+    d = np.load(npz77)
+    loc77 = np.asarray(d["local_rot_mats"], float)
+    if loc77.ndim != 4 or loc77.shape[1:] != (77, 3, 3):
+        raise KimodoError(f"{npz77.name}: expected somaskel77 local_rot_mats (T,77,3,3), got {loc77.shape}")
+    root = np.asarray(d["root_positions"], float)
+    loc30 = loc77[:, sl]
+    # Kimodo's skeleton buffers are float32: FK in float32, compare in float64
+    g30, p30, _ = s30.fk(torch.from_numpy(loc30.astype(np.float32)), torch.from_numpy(root.astype(np.float32)))
+    g30, p30 = g30.double(), p30.double()
+    g30, p30 = g30.numpy(), p30.numpy()
+    p77 = np.asarray(d["posed_joints"], float)[:, sl]
+    body = [i for i, n in enumerate(s30.bone_order_names) if n not in _SOMA30_HAND_ENDS]
+    err_body = float(np.abs(p30[:, body] - p77[:, body]).max())
+    if err_body > 1e-3:
+        raise KimodoError(
+            f"{npz77.name}: SOMA-30 FK disagrees with the CLI's posed joints by {err_body:.4f} m at a "
+            "body joint. The 30-in-77 slice or the npz keys are not what this export assumes.")
+    out = {"local_rot_mats": loc30, "global_rot_mats": g30, "posed_joints": p30, "root_positions": root}
+    if "foot_contacts" in d.files:
+        fc = np.asarray(d["foot_contacts"])
+        out["foot_contacts"] = fc[:, [0, 1, 3, 4]] if fc.shape[-1] == 6 else fc
+    np.savez_compressed(f"{stem}.soma30.npz", **out)
+
+    n30 = s30.neutral_joints.numpy()
+    ix = s30.bone_index
+
+    def _skel(s):
+        return {"name": s.name, "joints": list(s.bone_order_names),
+                "parents": [int(p) for p in s.joint_parents.tolist()],
+                "neutral_joints_m": np.round(s.neutral_joints.numpy(), 6).tolist()}
+    axes = {
+        "up": "+Y" if n30[ix["Head"], 1] > n30[ix["LeftFoot"], 1] else "-Y",
+        "forward": "+Z" if (n30[ix["LeftEye"], 2] + n30[ix["RightEye"], 2]) / 2 > n30[ix["Head"], 2] else "-Z",
+        "character_left": "+X" if n30[ix["LeftArm"], 0] > 0 else "-X",
+        "measured_from": "neutral joints: Head above LeftFoot, eyes ahead of Head, LeftArm x sign",
+    }
+    skel = {"teacher": _skel(s30), "cli_output": _skel(s77), "teacher_slice_in_cli_output": [int(i) for i in sl],
+            "axes": axes, "fps": 30, "rest": "identity local rotations = the neutral joints (a T-pose)",
+            "fk_bind_proof_max_err_m": {"body_joints": err_body,
+                                        "hand_ends": float(np.abs(p30 - p77).max())}}
+    Path(f"{stem}.skeleton.json").write_text(json.dumps(skel, indent=1), encoding="utf-8")
+    return {"frames": int(loc30.shape[0]), "fk_err_body_m": err_body, "axes": axes}
+
+
 @register("kimodo_motion")
 class KimodoMotionTrainer(Trainer):
     """Text -> motion -> smpl22 retarget, with the action string bound to the record."""
@@ -199,8 +299,12 @@ class KimodoMotionTrainer(Trainer):
         self.seed = int(setup.seed)
         self._log = setup.log_fn
 
-        # 1. GATES FIRST. Cheapest failure class, most expensive to find late.
-        self.results["hf_preflight"] = preflight_hf_repos()
+        # 1. GATES FIRST. Cheapest failure class, most expensive to find late. The model
+        #    name must be known (its skeleton decides the sidecar) and its OWN checkpoint is
+        #    the one probed: a SOMA run must not pass on the SMPL-X repo's access.
+        model = self.cfg.get("model", "kimodo-smplx-rp")
+        model_repo(model)
+        self.results["hf_preflight"] = preflight_hf_repos(repos=required_repos(model))
 
         # 2. Declare the clips. Each carries its OWN action string; that string is
         #    the thing the whole provenance contract hangs off.
@@ -246,17 +350,27 @@ class KimodoMotionTrainer(Trainer):
         npz = outdir / f"{name}.npz"
 
         model = self.cfg.get("model", "kimodo-smplx-rp")
-        duration = float(clip.get("duration_s", 3.5))
+        _, skeleton, n_joints = model_repo(model)
+        # A LIST of durations is the CLI's multi-prompt form: the action holds one sentence
+        # per segment ("walks forward. slams its fist down.") and the segments are generated
+        # as ONE motion with transitions. A scalar is the single-prompt form, as before.
+        dur = clip.get("duration_s", 3.5)
+        durations = [float(x) for x in dur] if isinstance(dur, (list, tuple)) else [float(dur)]
+        duration = sum(durations)
+        n_samples = int(clip.get("num_samples", 1))
         seed = int(clip.get("seed", self.seed))
 
         cmd = [
             os.environ.get("KIMODO_PY", "python"), "-m", "kimodo.scripts.generate",
             clip["action"],
             "--model", model,
-            "--duration", str(duration),
+            "--duration", " ".join(str(x) for x in durations),
             "--seed", str(seed),
             "--output", str(npz),
         ]
+        if n_samples > 1:
+            # one model load, several samples: the CLI then writes <outdir>/<name>/<name>_NN.npz
+            cmd += ["--num_samples", str(n_samples)]
         if clip.get("constraints"):
             cmd += ["--constraints", str(clip["constraints"])]
         if clip.get("diffusion_steps"):
@@ -270,14 +384,25 @@ class KimodoMotionTrainer(Trainer):
         env = dict(os.environ)
         env.setdefault("TEXT_ENCODER_DEVICE", self.cfg.get("text_encoder_device", "cpu"))
         proc = subprocess.run(cmd, env=env, capture_output=True, text=True)
-        if proc.returncode != 0 or not npz.exists():
+        npzs = ([npz] if n_samples == 1
+                else [outdir / name / f"{name}_{i:02d}.npz" for i in range(n_samples)])
+        missing = [p.name for p in npzs if not p.exists()]
+        if proc.returncode != 0 or missing:
             raise KimodoError(
-                f"kimodo generate failed for clip {name!r} (rc={proc.returncode}).\n"
-                f"stderr tail: {proc.stderr[-800:]}")
+                f"kimodo generate failed for clip {name!r} (rc={proc.returncode}, missing "
+                f"{missing}).\nstderr tail: {proc.stderr[-800:]}")
 
-        d = np.load(npz)
+        d = np.load(npzs[0])
         rot22 = d["local_rot_mats"]
         frames = int(rot22.shape[0])
+        for p in npzs:
+            got = np.load(p)["local_rot_mats"].shape
+            if len(got) != 4 or got[1] != n_joints:
+                raise KimodoError(
+                    f"{p.name}: model {model!r} should write {skeleton} ({n_joints} joints), the "
+                    f"npz has local_rot_mats {got}. Refusing to label it.")
+        exports = ({p.stem: soma30_export(p, p.with_suffix("")) for p in npzs}
+                   if skeleton == "somaskel77" else None)
 
         # THE SIDECAR. Everything needed to prove what produced this motion, and
         # to prove the action string is the same one the stylizer will be told.
@@ -290,12 +415,19 @@ class KimodoMotionTrainer(Trainer):
                                       if self.cfg.get("style_card_action") is not None
                                       else None),
             "model": model,
+            "model_repo": model_repo(model)[0],
             "model_revision": self.cfg.get("model_revision"),
-            "skeleton": "SMPLXSkeleton22",
-            "skeleton_equals_smpl24_prefix": True,   # measured, see module docstring
+            "skeleton": skeleton,
+            # measured for SMPLXSkeleton22 only (see module docstring); meaningless for SOMA
+            "skeleton_equals_smpl24_prefix": True if skeleton == "SMPLXSkeleton22" else None,
+            "teacher_skeleton": "somaskel30" if exports else skeleton,
+            "soma30_exports": exports,
             "fps": 30,
             "frames": frames,
             "duration_s": duration,
+            "durations_s": durations,
+            "num_samples": n_samples,
+            "sample_npz_sha256": {p.name: _sha256_file(p) for p in npzs},
             "seed": seed,
             "constraints": clip.get("constraints"),
             "diffusion_steps": clip.get("diffusion_steps"),
@@ -304,7 +436,7 @@ class KimodoMotionTrainer(Trainer):
                 "peft": "McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised",
                 "device": env.get("TEXT_ENCODER_DEVICE"),
             },
-            "npz_sha256": _sha256_file(npz),
+            "npz_sha256": _sha256_file(npzs[0]),
             "keys": sorted(list(d.keys())),
             "hf_preflight": self.results.get("hf_preflight"),
         }
@@ -317,7 +449,7 @@ class KimodoMotionTrainer(Trainer):
         if abs(frames - want) > 2:
             self._log(f"  WARN {name}: asked {want} frames, got {frames}")
 
-        self.results[name] = {"frames": frames, "npz": str(npz),
+        self.results[name] = {"frames": frames, "npz": str(npzs[0]), "npzs": [str(p) for p in npzs],
                               "action_md5": sidecar["action_md5"]}
         return TrainerStepResult(metrics={"frames": float(frames)}, n_examples=1)
 
