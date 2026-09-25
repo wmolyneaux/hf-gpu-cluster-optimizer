@@ -1,0 +1,59 @@
+# WorldClaw WC-HF: one Hunyuan3D 2.1 asset batch (models/hunyuan3d_asset.py).
+# One run = one batch; one epoch = one asset. Inputs are PNG cells cut from a
+# Game1 pipelines/sheet asset sheet (flat mid-grey background).
+#
+# LICENCE: Hunyuan3D output is NOT cleared for shipped assets pending counsel
+# (PLAN_WORLDCLAW 8.3a). Blockout / internal use only; every manifest says so.
+#
+# Before any launch (all free, nothing spins up):
+#   python modal_app.py --config configs/worldclaw_hunyuan.yaml --dry-run
+#   python scripts/stage_hunyuan_weights.py          # prints the weight plan
+#
+# Owner-only, each one bills:
+#   modal volume create worldclaw-hunyuan-weights
+#   modal run scripts/stage_hunyuan_weights.py --confirm       # CPU container
+#   modal volume put modallabs-runs <local cells dir> /worldclaw_inputs/bay_sheet_01
+#   modal run modal_app.py --config configs/worldclaw_hunyuan.yaml   # L40S
+#
+# Worst case: the hunyuan3d_asset type is pinned to L40S on the `short` lane
+# (1800 s) in modal_app._TYPE_PINNED, so this run is priced at 1800 s of L40S
+# no matter what it asks for; asking for more than 1800 s is refused.
+
+run_id: worldclaw_hunyuan_bay_sheet_01
+runs:
+  - name: bay_sheet_01
+    type: hunyuan3d_asset
+    seed: 0
+    modal:
+      gpu: L40S              # the pinned GPU; any other value is refused
+      max_runtime_sec: 1800  # the short lane; the smallest there is
+      est_sec_per_epoch: 300 # preview hint only (load + shape + paint per asset)
+    config:
+      package_root: /runs/worldclaw_inputs/bay_sheet_01
+      epochs: 3              # must equal the number of assets
+      # Shape: upstream Hunyuan3DDiTFlowMatchingPipeline defaults.
+      shape_steps: 50
+      guidance_scale: 5.0
+      octree_resolution: 384
+      # Paint: demo.py defaults (6 views, 512 px).
+      paint_max_views: 6
+      paint_resolution: 512
+      # Bill-guard budgets inside the 1800 s lane (L3 fires at 1680 s).
+      startup_timeout_sec: 600
+      asset_timeout_sec: 300
+      assets:
+        - name: ghoul_oak
+          image: cells/ghoul_oak.png
+          seed: 1001
+          texture: true
+          target_faces: 20000
+        - name: swamp_lantern
+          image: cells/swamp_lantern.png
+          seed: 1002
+          texture: true
+          target_faces: 8000
+        - name: fern_clump
+          image: cells/fern_clump.png
+          seed: 1003
+          texture: false     # shape only: blockout mesh, untextured
+          target_faces: 6000

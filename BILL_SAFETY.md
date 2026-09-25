@@ -56,6 +56,24 @@ harness's stale in-file price table (so it decides whether the launcher blocks),
 uses the rate verified against modal.com/pricing. `modal_app.py:55-57` says itself that the table
 needs verifying.
 
+### Typed pins (`_TYPE_PINNED`, added 2026-09-24 for WorldClaw WC-HF)
+
+A type listed in `_TYPE_PINNED` runs in its own function on its own GPU and lane, and both the
+dry-run and the launch gate price it at **that GPU's rate for that lane's full timeout** -- the
+timeout Modal enforces on the function -- whatever smaller `max_runtime_sec` the run asks for. A
+pinned run asking for other silicon, or for more time than its lane, is refused.
+
+| Type | GPU | Lane | Gate worst case (in-file table) |
+|---|---|---|---|
+| `hunyuan3d_asset` | L40S (48 GB; Hunyuan3D 2.1 needs 29 GB for shape + paint) | `short` (1800 s) | $1.00 |
+
+The L40S invoice rate has **not** been verified against modal.com/pricing; the $1.00 is the gate's
+number from the in-file table, not an invoice.
+
+Known gap, not changed here: `wan_vace_shot` is not pinned. Its function runs on the `medium` lane
+(5400 s) but the gate prices it at the run's own `max_runtime_sec`, so a Wan run asking for 1800 s is
+previewed at a third of its real worst case.
+
 ## Behaviour changes
 
 - Mixed **timeouts** in one sweep now **route** instead of raising. Mixed **GPUs** still raise, since

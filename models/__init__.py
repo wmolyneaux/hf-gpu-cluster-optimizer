@@ -29,6 +29,7 @@ _safe_import("modallabs.models.manifold")
 _safe_import("modallabs.models.ntm")
 _safe_import("modallabs.models.q_learning")
 _safe_import("modallabs.models.wan_vace_shot")
+_safe_import("modallabs.models.hunyuan3d_asset")
 _safe_import("modallabs.models.diffusion")
 
 # Optional ML libs

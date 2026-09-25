@@ -422,14 +422,18 @@ modallabs/
     catboost.py        -- CatBoost gradient boosting
     q_learning.py      -- DQN with double-Q + dueling head
     diffusion.py       -- minimal DDPM (smoke-friendly)
+    hunyuan3d_asset.py -- Hunyuan3D 2.1 image-to-3D asset batch (WorldClaw; L40S)
+    hunyuan3d_worker.py -- its model-holding subprocess (not a trainer)
     ...
   configs/
     _template.yaml     -- documented schema
     all_models.yaml    -- demo: 6+ model families in one run
     hf_examples.yaml   -- one example per HF architecture
     cost_controlled_modal.yaml  -- Modal cost-knob demo
+    worldclaw_hunyuan.yaml      -- one 3-asset Hunyuan3D batch
   tests/
     smoke.py           -- end-to-end smoke + determinism check
+    test_hunyuan3d_asset.py -- pytest: hunyuan3d_asset controls (stub, no GPU)
 ```
 
 ## Design constraints

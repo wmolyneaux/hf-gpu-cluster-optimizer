@@ -35,6 +35,23 @@ from modallabs.runner import train_one  # noqa: E402
 from modallabs.registry import list_types  # noqa: E402
 
 
+def _hunyuan_smoke_pkg() -> str:
+    """A package_root holding one 64x64 grey PNG for the hunyuan3d_asset stub."""
+    import struct
+    import zlib
+    root = Path(tempfile.mkdtemp(prefix="modallabs_hy3d_pkg_"))
+    raw = zlib.compress(b"".join(b"\x00" + b"\x80" * (64 * 3) for _ in range(64)))
+
+    def chunk(t: bytes, d: bytes) -> bytes:
+        return (struct.pack(">I", len(d)) + t + d
+                + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF))
+
+    (root / "cell.png").write_bytes(
+        b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 64, 64, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", raw) + chunk(b"IEND", b""))
+    return str(root)
+
+
 def _has(modname: str) -> bool:
     try:
         __import__(modname)
@@ -56,6 +73,15 @@ _LOCAL_CASES: List[Tuple[str, Dict[str, Any], List[str]]] = [
         "width": 64, "height": 64, "frames": 5, "fps": 16,
         "model_high": "hi", "model_low": "lo",
         "text_encoder": "te", "vae": "vae",
+    }, []),
+    ("hunyuan3d_asset", {
+        "stub": True,  # worker subprocess + job protocol, no weights, no GPU
+        "package_root": _hunyuan_smoke_pkg(),
+        "epochs": 1, "shape_steps": 50, "guidance_scale": 5.0,
+        "octree_resolution": 384, "paint_max_views": 6, "paint_resolution": 512,
+        "min_side_px": 64, "poll_sec": 0.05,
+        "assets": [{"name": "smoke_asset", "image": "cell.png", "seed": 1,
+                    "texture": True, "target_faces": 1000}],
     }, []),
     ("torch_module", {
         "module_path": "torch.nn:Linear",

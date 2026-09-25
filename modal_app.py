@@ -39,7 +39,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 # -- Modal SDK (optional import; the file is also runnable as a CLI
@@ -113,6 +113,42 @@ _LANES: Dict[str, int] = {
     "long":  14400,    # 4 h    - full FPO training runs (1.5-4h estimated)
 }
 _DEFAULT_LANE = "short"
+
+# Typed runs that pin their OWN silicon and lane, instead of (_REMOTE_GPU, the
+# lane _lane_for picks). The dry-run and the launch gate both price these at the
+# pinned GPU's rate for the pinned lane's FULL timeout -- the timeout Modal will
+# actually enforce -- so the preview can never understate the bill. A request
+# for other silicon, or for more time than the lane, is refused, not rounded.
+#
+# hunyuan3d_asset -> L40S on `short`. Hunyuan3D 2.1's README states 10 GB of
+# VRAM for shape, 21 GB for texture, 29 GB for both. Against _GPU_HOURLY_USD:
+# T4 (16 GB), L4 (24 GB) and A10G (24 GB) cannot hold 29 GB; L40S (48 GB) at
+# $2.00/h is the cheapest tier that can, with 19 GB of headroom; A100-40G
+# ($3.10/h) is dearer with less headroom, A100-80G / H100 / H200 dearer still.
+# 3 assets = cold start + ~5 min load + 3 x (shape + paint) fits 30 min; a
+# bigger batch is split, not moved to a longer lane.
+_TYPE_PINNED: Dict[str, Tuple[str, str]] = {
+    "hunyuan3d_asset": ("L40S", "short"),
+}
+
+
+def _pinned_lane(rc: Dict[str, Any]) -> Optional[str]:
+    """The pinned lane of a typed run, or None for every other run.
+
+    Raises if the run asks for more time than its pinned lane gives.
+    """
+    pin = _TYPE_PINNED.get(str(rc.get("type") or ""))
+    if pin is None:
+        return None
+    lane = pin[1]
+    requested = _max_runtime_sec(rc)
+    if requested > _LANES[lane]:
+        raise RuntimeError(
+            f"modallabs/modal: {rc.get('name')!r} ({rc.get('type')!r}) asks for "
+            f"max_runtime_sec={requested}; that type is pinned to the {lane!r} lane "
+            f"({_LANES[lane]}s). Split the batch; do not widen the lane without review."
+        )
+    return lane
 
 
 def _max_total_usd() -> float:
@@ -192,6 +228,15 @@ def auto_select_gpu(rc: Dict[str, Any]) -> str:
 def _gpu_for_run(rc: Dict[str, Any]) -> str:
     modal_section = rc.get("modal") or {}
     g = modal_section.get("gpu")
+    pin = _TYPE_PINNED.get(str(rc.get("type") or ""))
+    if pin is not None:
+        if g and str(g).lower() != "auto" and str(g) != pin[0]:
+            raise RuntimeError(
+                f"modallabs/modal: {rc.get('name')!r} ({rc.get('type')!r}) requests gpu "
+                f"{g!r}, but that type is pinned to {pin[0]!r}. Remove cfg.modal.gpu or set "
+                f"it to {pin[0]!r}."
+            )
+        return pin[0]
     if not g or str(g).lower() == "auto":
         return auto_select_gpu(rc)
     return str(g)
@@ -221,7 +266,11 @@ def _worst_case_runtime_sec(rc: Dict[str, Any]) -> int:
     """Worst-case billable seconds = the hard timeout that Modal will actually
     enforce. If a model hangs, the user pays for `max_runtime_sec`, not the
     optimistic `epochs * est_sec_per_epoch`. The cost ceiling and the dry-run
-    preview must both gate on THIS number."""
+    preview must both gate on THIS number. A pinned type runs in a function whose
+    timeout is its lane's, so its worst case is the whole lane."""
+    lane = _pinned_lane(rc)
+    if lane is not None:
+        return _LANES[lane]
     return _max_runtime_sec(rc)
 
 
@@ -559,10 +608,86 @@ if _HAS_MODAL:
         """Wan 2.2 VACE shot-batch lane. One epoch is one shot; weights load once."""
         return _remote_body(run_cfg, run_id, resume, _LANES["medium"])
 
-    # Routed on the run's own type, not on its timeout: the Wan lane differs by
-    # IMAGE and by VOLUME, which _lane_for cannot see. A single explicit key,
-    # never a heuristic.
-    _TYPE_LANE_FNS = {"wan_vace_shot": _remote_wan}
+    # --------------------------------------------------------- Hunyuan3D lane
+    # WorldClaw WC-HF: Hunyuan3D 2.1 image-to-3D assets (models/hunyuan3d_asset.py).
+    # Own image, own weights volume, own silicon (_TYPE_PINNED: L40S, short lane).
+    # Code pinned to the exact commit whose API the trainer and worker were
+    # written against. MUST equal models/hunyuan3d_asset._HY3D_COMMIT
+    # (tests/test_hunyuan3d_asset.py enforces it).
+    _HUNYUAN3D_COMMIT = "82920d643c0dc2f7bfd7255f45f62d386edfe60c"
+    # Upstream requirements.txt at that commit, from PyPI ONLY: its two extra
+    # indexes (mirrors.cloud.tencent.com, mirrors.aliyun.com) are dropped, as are
+    # the demo/training-only packages (gradio, fastapi, uvicorn, deepspeed,
+    # pythreejs, open3d, cupy). Two deliberate deviations, both forced:
+    #   bpy==4.0 no longer exists on PyPI (oldest is 4.2.0, cp311 only), so the
+    #   image is Python 3.11 + bpy==4.2.0 -- upstream mesh_utils already branches
+    #   on bpy >= 4.2 -- and numpy==1.26.4, the version Blender 4.2 ships against.
+    #   timm and torchdiffeq are unpinned upstream; pinned here.
+    _HUNYUAN3D_PIP = (
+        "setuptools==75.8.0", "wheel==0.45.1", "ninja==1.11.1.1", "pybind11==2.13.4",
+        "transformers==4.46.0", "diffusers==0.30.0", "accelerate==1.1.1",
+        "pytorch-lightning==1.9.5", "huggingface-hub==0.30.2", "safetensors==0.4.4",
+        "numpy==1.26.4", "scipy==1.14.1", "einops==0.8.0", "pandas==2.2.2",
+        "opencv-python==4.10.0.84", "imageio==2.36.0", "scikit-image==0.24.0",
+        "rembg==2.0.65", "onnxruntime==1.16.3", "realesrgan==0.3.0", "basicsr==1.4.2",
+        "tb-nightly==2.18.0a20240726", "trimesh==4.4.7", "pymeshlab==2022.2.post3",
+        "pygltflib==1.16.3", "xatlas==0.0.9", "omegaconf==2.3.0", "pyyaml==6.0.2",
+        "configargparse==1.7", "tqdm==4.66.5", "psutil==6.0.0", "bpy==4.2.0",
+        "torchmetrics==1.6.0", "pydantic==2.10.6", "timm==1.0.15", "torchdiffeq==0.2.5",
+    )
+    hunyuan_image = (
+        # devel, not runtime: custom_rasterizer is a CUDA extension built here.
+        modal.Image.from_registry("nvidia/cuda:12.4.1-devel-ubuntu22.04", add_python="3.11")
+        .apt_install("git", "build-essential", "libgl1", "libegl1", "libglib2.0-0",
+                     "libxrender1", "libxi6", "libxkbcommon-x11-0", "libsm6", "libxext6",
+                     "libxxf86vm1", "libxfixes3")
+        # The README's tested torch: 2.5.1 + cu124.
+        .pip_install("torch==2.5.1", "torchvision==0.20.1",
+                     index_url="https://download.pytorch.org/whl/cu124")
+        .pip_install(*_HUNYUAN3D_PIP)
+        .run_commands(
+            "git init /hunyuan3d && cd /hunyuan3d && "
+            "git remote add origin https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1.git && "
+            f"git fetch --depth 1 origin {_HUNYUAN3D_COMMIT} && "
+            "git checkout FETCH_HEAD",
+            # README: `cd hy3dpaint/custom_rasterizer && pip install -e .`. No GPU at
+            # build time, so the arch list is explicit: 8.9 = L40S, 9.0 = H100.
+            "cd /hunyuan3d/hy3dpaint/custom_rasterizer && pip install --no-build-isolation .",
+            # README: `bash compile_mesh_painter.sh`. That script calls
+            # python3-config, which the add_python interpreter does not ship; this
+            # is the same c++ line with the suffix read from sysconfig instead.
+            "cd /hunyuan3d/hy3dpaint/DifferentiableRenderer && "
+            "c++ -O3 -Wall -shared -std=c++11 -fPIC $(python -m pybind11 --includes) "
+            "mesh_inpaint_processor.cpp -o mesh_inpaint_processor"
+            "$(python -c \"import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))\")",
+            env={"TORCH_CUDA_ARCH_LIST": "8.9;9.0", "CUDA_HOME": "/usr/local/cuda",
+                 "FORCE_CUDA": "1"},
+        )
+        .env({"PYTHONUNBUFFERED": "1", "PYOPENGL_PLATFORM": "egl"})
+        .add_local_python_source("modallabs")
+    )
+    # create_if_missing=False ON PURPOSE (as the Wan volume): a typo must fail at
+    # launch, and a dry run must never create anything. Staged by
+    # scripts/stage_hunyuan_weights.py.
+    hunyuan_weights_volume = modal.Volume.from_name(
+        "worldclaw-hunyuan-weights", create_if_missing=False)
+
+    _HUNYUAN_GPU, _HUNYUAN_LANE = _TYPE_PINNED["hunyuan3d_asset"]
+
+    @app.function(image=hunyuan_image, gpu=_HUNYUAN_GPU, timeout=_LANES[_HUNYUAN_LANE],
+                  volumes={"/runs": runs_volume, "/hy3d_models": hunyuan_weights_volume})
+    def _remote_hunyuan(run_cfg: dict, run_id: str, resume: bool) -> dict:
+        """Hunyuan3D 2.1 asset-batch lane. One epoch is one asset; models load once."""
+        return _remote_body(run_cfg, run_id, resume, _LANES[_HUNYUAN_LANE])
+
+    # Routed on the run's own type, not on its timeout: the Wan and Hunyuan lanes
+    # differ by IMAGE and by VOLUME (Hunyuan also by GPU), which _lane_for cannot
+    # see. A single explicit key, never a heuristic.
+    _TYPE_LANE_FNS = {"wan_vace_shot": _remote_wan,
+                      "hunyuan3d_asset": _remote_hunyuan}
+    for _t in _TYPE_PINNED:
+        if _t not in _TYPE_LANE_FNS:
+            raise RuntimeError(f"modallabs/modal: pinned type {_t!r} has no remote function")
 
     @app.local_entrypoint()
     def main(
@@ -630,7 +755,13 @@ if _HAS_MODAL:
         gpu_mismatches = []
         routing = []
         for rc in runs:
-            gpu = _gpu_for_run(rc)
+            gpu = _gpu_for_run(rc)  # raises for a pinned type asking for other silicon
+            pinned = _pinned_lane(rc)  # raises for a pinned type asking for too long
+            if pinned is not None:
+                # Its own function, on its own GPU, at its own lane's timeout --
+                # exactly what estimate_total_cost_usd() priced.
+                routing.append((rc, pinned, _TYPE_LANE_FNS[str(rc.get("type"))]))
+                continue
             if gpu != _REMOTE_GPU:
                 gpu_mismatches.append({"name": rc.get("name"), "requested_gpu": gpu})
                 continue
